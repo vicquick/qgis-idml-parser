@@ -2,7 +2,7 @@
 
 Result of a 42-agent adversarial audit (every finding verified against
 the source with a concrete visual-difference scenario). Items marked
-**FIXED** were resolved in 0.5.0 before release; the rest are known,
+**FIXED** were resolved in 0.5.0 / 0.5.1; the rest are known,
 documented gaps — ordered by severity. PRs welcome.
 
 Out of scope by design: the *interior* of placed map / legend /
@@ -17,22 +17,22 @@ scalebar / table PDFs is Qt-rendered and matches QGIS by construction.
 | 5 | **FIXED 0.5.0** | high | `mapping.py` | export_group() silently ignores excludeFromExports on grouped children |
 | 6 | **FIXED 0.5.0** | medium | `idml_package.py` | Empty HTML labels emit a malformed Story (zero ParagraphStyleRange elements) |
 | 7 | **FIXED 0.5.0** | low | `mapping.py` | Rounded-rectangle corner radius is not clamped to half the shorter side |
-| 8 | open | high | `mapping.py` | QgsTextFormat.buffer() (halo/outline) is never read — completely dropped |
-| 9 | open | high | `text_runs.py` | Format-level line spacing (QgsTextFormat.lineHeight()) is ignored for plain 'Font' mode labels |
-| 10 | open | high | `text_runs.py` | Text capitalization / case transform (all-caps, small caps) never read — produces a literal text mismatch, not just a style nuance |
-| 11 | open | high | `text_runs.py` | HTML list markup (<ul>/<ol>/<li>) loses its bullet/number entirely, not just its indent style |
+| 8 | **FIXED 0.5.1** | high | `mapping.py` | QgsTextFormat.buffer() (halo/outline) is never read — completely dropped |
+| 9 | **FIXED 0.5.1** | high | `text_runs.py` | Format-level line spacing (QgsTextFormat.lineHeight()) is ignored for plain 'Font' mode labels |
+| 10 | **FIXED 0.5.1** | high | `text_runs.py` | Text capitalization / case transform (all-caps, small caps) never read — produces a literal text mismatch, not just a style nuance |
+| 11 | **FIXED 0.5.1** | high | `text_runs.py` | HTML list markup (<ul>/<ol>/<li>) loses its bullet/number entirely, not just its indent style |
 | 12 | open | high | `idml_package.py` | Every custom color is written as RGB Process — the predefined CMYK Black swatch is dead code |
 | 13 | open | high | `mapping.py` | QgsLayoutItem.opacity() (the generic item Rendering-tab opacity slider) is never read for any item type |
 | 14 | open | high | `mapping.py` | Only symbolLayer(0) is ever read — multi-layer fill/line symbols lose every layer beyond the first |
 | 15 | open | high | `mapping.py` | Dashed/dotted/other pen styles are dropped — every stroke exports solid |
 | 16 | open | high | `mapping.py` | Page background color is ignored entirely — the InDesign page always renders with no fill |
 | 17 | open | high | `mapping.py` | Backgrounded/framed labels get no auto-size overset protection, despite the code's own documented risk |
-| 18 | open | high | `mapping.py` | Data-defined label text formatting (font family/size/color) is never evaluated |
-| 19 | open | medium | `mapping.py` | QgsTextFormat.background() (shaped text background/chip) never read — conflated with item.hasBackground() |
-| 20 | open | medium | `mapping.py` | QgsTextFormat.shadow() (text drop shadow) never read |
-| 21 | open | medium | `text_runs.py` | Letter spacing / word spacing (QFont.letterSpacing()/wordSpacing()) never forwarded to IDML Tracking |
-| 22 | open | medium | `idml_package.py` | Character-level color alpha (semi-transparent text) is silently made fully opaque |
-| 23 | open | medium | `text_runs.py` | Sub/superscript spans (<sub>/<sup>) render as normal baseline text |
+| 18 | **FIXED 0.5.1** | high | `mapping.py` | Data-defined label text formatting (font family/size/color) is never evaluated |
+| 19 | **FIXED 0.5.1** | medium | `mapping.py` | QgsTextFormat.background() (shaped text background/chip) never read — conflated with item.hasBackground() |
+| 20 | **FIXED 0.5.1** | medium | `mapping.py` | QgsTextFormat.shadow() (text drop shadow) never read |
+| 21 | **FIXED 0.5.1** | medium | `text_runs.py` | Letter spacing / word spacing (QFont.letterSpacing()/wordSpacing()) never forwarded to IDML Tracking |
+| 22 | **FIXED 0.5.1** | medium | `idml_package.py` | Character-level color alpha (semi-transparent text) is silently made fully opaque |
+| 23 | **FIXED 0.5.1** | medium | `text_runs.py` | Sub/superscript spans (<sub>/<sup>) render as normal baseline text |
 | 24 | open | medium | `text_runs.py` | Custom tab stops are never emitted; a literal tab character falls back to InDesign's default tab grid |
 | 25 | open | medium | `mapping.py` | Data-defined (per-atlas-feature) item rotation is ignored |
 | 26 | open | medium | `exporter.py` | An item spanning a page boundary is placed on only one spread and is missing from the other |
@@ -105,7 +105,7 @@ export_shape() (lines ~602-614) reads item.cornerRadius() and emits TopLeftCorne
 
 **Suggested fix:** Defensively clamp r_pt to min(r_pt, w_pt/2.0, h_pt/2.0) before writing the CornerRadius attributes, so the exported geometry matches QGIS's own clamped rendering regardless of InDesign's internal handling of oversized values.
 
-### 8. QgsTextFormat.buffer() (halo/outline) is never read — completely dropped
+### 8. QgsTextFormat.buffer() (halo/outline) is never read — completely dropped — **FIXED in 0.5.1**
 
 *high · `export_idml/mapping.py`*
 
@@ -113,7 +113,7 @@ export_label() (line ~326) reads item.textFormat() but only pulls font(), size()
 
 **Suggested fix:** When tf.buffer().enabled(), either emit a duplicated CharacterStyleRange/text-frame copy underneath using StrokeColor+StrokeWeight (IDML supports outlined type per character range) sized from buffer().size(), or at minimum push an export warning so the loss is visible to the user rather than silent.
 
-### 9. Format-level line spacing (QgsTextFormat.lineHeight()) is ignored for plain 'Font' mode labels
+### 9. Format-level line spacing (QgsTextFormat.lineHeight()) is ignored for plain 'Font' mode labels — **FIXED in 0.5.1**
 
 *high · `export_idml/text_runs.py`*
 
@@ -121,7 +121,7 @@ plain_text_paragraphs() (lines 204-242) hardcodes "line_height_pct": None uncond
 
 **Suggested fix:** In export_label(), for the non-HTML branch, read tf.lineHeight()/tf.lineHeightUnit(), convert to a percentage, and set it on each paragraph the same way HTML mode already threads line_height_pct through to story_xml's <Leading> element.
 
-### 10. Text capitalization / case transform (all-caps, small caps) never read — produces a literal text mismatch, not just a style nuance
+### 10. Text capitalization / case transform (all-caps, small caps) never read — produces a literal text mismatch, not just a style nuance — **FIXED in 0.5.1**
 
 *high · `export_idml/text_runs.py`*
 
@@ -129,7 +129,7 @@ Neither _run_from_format nor plain_text_paragraphs reads font.capitalization() (
 
 **Suggested fix:** Read font.capitalization() per run and either transform the literal <Content> text to match, or (preferred, keeps text editable) set IDML's Capitalization="AllCaps"/"SmallCaps" attribute on the CharacterStyleRange.
 
-### 11. HTML list markup (<ul>/<ol>/<li>) loses its bullet/number entirely, not just its indent style
+### 11. HTML list markup (<ul>/<ol>/<li>) loses its bullet/number entirely, not just its indent style — **FIXED in 0.5.1**
 
 *high · `export_idml/text_runs.py`*
 
@@ -185,7 +185,7 @@ The comment at lines 391-396 states the exporter's rationale plainly: 'QGIS fram
 
 **Suggested fix:** Extend the HeightOnly auto-sizing path to backgrounded/framed labels too (InDesign auto-sizing still keeps the frame's own fill/stroke — it only grows the box), or at minimum estimate wrapped line count via the existing _natural_width_pt()-style measurement and push a warning when it's close to overset so affected spreads are flagged for manual review.
 
-### 18. Data-defined label text formatting (font family/size/color) is never evaluated
+### 18. Data-defined label text formatting (font family/size/color) is never evaluated — **FIXED in 0.5.1**
 
 *high · `export_idml/mapping.py`*
 
@@ -193,7 +193,7 @@ export_label() reads `tf = item.textFormat()` then `font = tf.font()` / `color =
 
 **Suggested fix:** Before reading font/size/color, evaluate the text format's data-defined properties against item.createExpressionContext() (the same context already built for _fill_stroke_from_symbol/_dd_color), mirroring the pattern already used for shapes.
 
-### 19. QgsTextFormat.background() (shaped text background/chip) never read — conflated with item.hasBackground()
+### 19. QgsTextFormat.background() (shaped text background/chip) never read — conflated with item.hasBackground() — **FIXED in 0.5.1**
 
 *medium · `export_idml/mapping.py`*
 
@@ -201,7 +201,7 @@ Lines 385-389 read item.hasBackground()/backgroundColor() — the label item's o
 
 **Suggested fix:** Read tf.background(); when enabled(), emit a shape (Rectangle/Oval per background().type()) behind the text frame sized/colored from its settings, or log a warning that the badge/chip background was dropped.
 
-### 20. QgsTextFormat.shadow() (text drop shadow) never read
+### 20. QgsTextFormat.shadow() (text drop shadow) never read — **FIXED in 0.5.1**
 
 *medium · `export_idml/mapping.py`*
 
@@ -209,7 +209,7 @@ Same pattern as buffer/background: tf.shadow() (QgsTextShadowSettings: enabled, 
 
 **Suggested fix:** When tf.shadow().enabled(), emit an IDML object-level drop-shadow effect on the TextFrame (or at least warn that the shadow was dropped).
 
-### 21. Letter spacing / word spacing (QFont.letterSpacing()/wordSpacing()) never forwarded to IDML Tracking
+### 21. Letter spacing / word spacing (QFont.letterSpacing()/wordSpacing()) never forwarded to IDML Tracking — **FIXED in 0.5.1**
 
 *medium · `export_idml/text_runs.py`*
 
@@ -217,7 +217,7 @@ _run_from_format (lines 41-65, HTML mode) and plain_text_paragraphs (lines 204-2
 
 **Suggested fix:** Read font.letterSpacing()/letterSpacingType() in both run builders, convert to IDML Tracking (1/1000 em) on the CharacterStyleRange.
 
-### 22. Character-level color alpha (semi-transparent text) is silently made fully opaque
+### 22. Character-level color alpha (semi-transparent text) is silently made fully opaque — **FIXED in 0.5.1**
 
 *medium · `export_idml/idml_package.py`*
 
@@ -225,7 +225,7 @@ ColorRegistry.ref() (lines 63-70) keys colors by (r,g,b) only, discarding alpha 
 
 **Suggested fix:** Carry alpha alongside RGB per run (or a separate opacity field) and emit <FillTransparencySetting><BlendingSetting Opacity="..."/></FillTransparencySetting> inside each CharacterStyleRange, mirroring the pattern _transparency_xml already uses for shape fills.
 
-### 23. Sub/superscript spans (<sub>/<sup>) render as normal baseline text
+### 23. Sub/superscript spans (<sub>/<sup>) render as normal baseline text — **FIXED in 0.5.1**
 
 *medium · `export_idml/text_runs.py`*
 

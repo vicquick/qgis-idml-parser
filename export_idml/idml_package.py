@@ -371,6 +371,14 @@ def story_xml(story_id, paragraphs, color_registry, font_registry):
             para_attrs.append('FirstLineIndent="{}"'.format(fmt(fli)))
         if sa:
             para_attrs.append('SpaceAfter="{}"'.format(fmt(sa)))
+        # word spacing: extra pt per space -> percentage of a normal space
+        ws_runs = [r for r in para.get("runs", []) if r.get("word_spacing_pt")]
+        if ws_runs:
+            r0 = ws_runs[0]
+            normal = 0.25 * (r0.get("size_pt") or 10.0)  # ~space width
+            pct = max(0, min(500, 100.0 + r0["word_spacing_pt"] / normal * 100.0))
+            for a in ("DesiredWordSpacing", "MinimumWordSpacing", "MaximumWordSpacing"):
+                para_attrs.append('{}="{}"'.format(a, fmt(pct)))
         parts.append(
             '<ParagraphStyleRange '
             'AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle" '
@@ -390,11 +398,38 @@ def story_xml(story_id, paragraphs, color_registry, font_registry):
                 attrs.append('Underline="true"')
             if run.get("strikeout"):
                 attrs.append('StrikeThru="true"')
+            if run.get("tracking"):
+                attrs.append('Tracking="{}"'.format(int(run["tracking"])))
+            if run.get("caps"):
+                attrs.append('Capitalization="{}"'.format(run["caps"]))
+            if run.get("position"):
+                attrs.append('Position="{}"'.format(run["position"]))
+            color = run.get("color")
+            if color is not None and 0 < color.alpha() < 255:
+                # semi-transparent text -> tint of the solid swatch
+                attrs.append('FillTint="{}"'.format(fmt(color.alpha() / 255.0 * 100.0)))
+            if run.get("stroke_weight_pt"):
+                # QGIS text buffer/halo -> outlined type (stroke straddles
+                # the outline, so weight = 2 x buffer radius)
+                attrs.append(
+                    "StrokeColor={}".format(
+                        quoteattr(color_registry.ref(run.get("stroke_color")))
+                    )
+                )
+                attrs.append('StrokeWeight="{}"'.format(fmt(run["stroke_weight_pt"])))
+                tint = run.get("stroke_tint")
+                if tint is not None and tint < 100:
+                    attrs.append('StrokeTint="{}"'.format(fmt(tint)))
             parts.append("<CharacterStyleRange {}>".format(" ".join(attrs)))
             props = ["<AppliedFont type=\"string\">{}</AppliedFont>".format(escape(family))]
+            leading_pt = para.get("leading_pt")
             lh = para.get("line_height_pct")
-            if lh:
-                # proportional CSS line-height -> absolute IDML leading
+            if leading_pt:
+                props.append(
+                    "<Leading type=\"unit\">{}</Leading>".format(fmt(leading_pt))
+                )
+            elif lh:
+                # proportional line-height -> absolute IDML leading
                 props.append(
                     "<Leading type=\"unit\">{}</Leading>".format(
                         fmt(run["size_pt"] * lh / 100.0)

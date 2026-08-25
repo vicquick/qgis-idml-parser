@@ -126,6 +126,35 @@ def build_layout(project, layer, png_path):
     multi.attemptResize(QgsLayoutSize(80, 30))
     layout.addLayoutItem(multi)
 
+    # font features: buffer/halo + all-caps + letter spacing + line spacing
+    fancy = QgsLayoutItemLabel(layout)
+    fancy.setText("Halo Text")
+    ftf = fancy.textFormat()
+    ffont = QFont("Arial", 12)
+    ffont.setCapitalization(QFont.Capitalization.AllUppercase)
+    ffont.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 105)
+    ftf.setFont(ffont)
+    ftf.setSize(12)
+    ftf.buffer().setEnabled(True)
+    ftf.buffer().setSize(1.0)  # mm
+    ftf.buffer().setColor(QColor(255, 255, 255))
+    try:
+        ftf.setLineHeight(1.5)
+    except Exception:
+        pass
+    fancy.setTextFormat(ftf)
+    fancy.attemptMove(QgsLayoutPoint(10, 180))
+    fancy.attemptResize(QgsLayoutSize(60, 12))
+    layout.addLayoutItem(fancy)
+
+    # HTML list + superscript
+    lst = QgsLayoutItemLabel(layout)
+    lst.setMode(_enum(QgsLayoutItemLabel, "Mode", "ModeHtml"))
+    lst.setText("<ul><li>Rutsche</li><li>Schaukel</li></ul><p>m<sup>2</sup></p>")
+    lst.attemptMove(QgsLayoutPoint(80, 180))
+    lst.attemptResize(QgsLayoutSize(50, 25))
+    layout.addLayoutItem(lst)
+
     # picture
     pic = QgsLayoutItemPicture(layout)
     pic.setPicturePath(png_path)
@@ -206,6 +235,17 @@ def main():
             assert "&amp;" in s, "ampersand not escaped in content"
     assert bad == 0, "%d standalone <Br/>-only paragraph ranges" % bad
     assert ok_br == 1, "expected exactly 1 <Br/> in 2-paragraph story, got %d" % ok_br
+
+    # font-feature assertions across all stories
+    all_stories = "".join(
+        z.read(n).decode("utf-8") for n in z.namelist() if n.startswith("Stories/")
+    )
+    assert 'Capitalization="AllCaps"' in all_stories, "all-caps lost"
+    assert "StrokeWeight=" in all_stories, "text buffer/halo lost"
+    assert 'Tracking="50"' in all_stories, "letter spacing lost"
+    assert "<Leading" in all_stories, "line spacing lost"
+    assert "•" in all_stories, "HTML list bullet lost"
+    assert 'Position="Superscript"' in all_stories, "superscript lost"
     if result["warnings"]:
         print("EXPORT WARNINGS:", result["warnings"])
     print("VALIDATION:", "FAILED" if errors else "OK")
