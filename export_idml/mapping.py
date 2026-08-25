@@ -52,7 +52,14 @@ from .geom import (
     rotation_at,
     triangle_path,
 )
-from .text_runs import extract_runs, extract_structure, plain_text_paragraphs
+from .text_runs import (
+    annotate_run_from_font,
+    enum_int,
+    apply_case_transforms,
+    extract_runs,
+    extract_structure,
+    plain_text_paragraphs,
+)
 from .fonts import qfont_style_name
 
 
@@ -324,9 +331,53 @@ def _export_table_label(item, pkg, spread, table, w_pt, h_pt, transform):
         spread.end_group()
 
 
+def _evaluated_text_format(item):
+    """Text format with data-defined overrides (per-atlas-feature font /
+    size / color expressions) resolved - mirrors what QGIS renders."""
+    tf = item.textFormat()
+    try:
+        from qgis.core import QgsRenderContext, QgsTextFormat
+
+        props = tf.dataDefinedProperties()
+        if props and props.hasActiveProperties():
+            tf = QgsTextFormat(tf)
+            rc = QgsRenderContext()
+            rc.setExpressionContext(item.createExpressionContext())
+            tf.updateDataDefinedProperties(rc)
+    except Exception:
+        pass
+    return tf
+
+
+_QGIS_CAPS = {1: "AllCaps", 3: "SmallCaps"}
+
+
+def _apply_tf_caps(tf, paragraphs):
+    """QgsTextFormat.capitalization() -> IDML attr or text transform."""
+    try:
+        caps = enum_int(tf.capitalization())
+    except Exception:
+        return
+    try:
+        if caps == enum_int(_enum(Qgis, "Capitalization", "AllSmallCaps")):
+            caps = 3
+    except Exception:
+        pass
+    if caps == 0:
+        return
+    for p in paragraphs:
+        for r in p["runs"]:
+            if caps in _QGIS_CAPS:
+                r["caps"] = _QGIS_CAPS[caps]
+            elif caps == 2:
+                r["text"] = r["text"].lower()
+            elif caps == 4:
+                r["text"] = r["text"].title()
+
+
 def export_label(item, pkg, spread, ctx):
     w_pt, h_pt, transform = item_geometry(item, spread)
-    tf = item.textFormat()
+    tf = _evaluated_text_format(item)
     font = tf.font()
     try:
         size_pt = _render_size_to_pt(tf.size(), tf.sizeUnit())
@@ -342,7 +393,8 @@ def export_label(item, pkg, spread, ctx):
     }.get(int(item.hAlign()) & int(Qt.AlignmentFlag.AlignHorizontal_Mask), "LeftAlign")
 
     text = item.currentText()
-    if item.mode() == _enum(QgsLayoutItemLabel, "Mode", "ModeHtml"):
+    html_mode = item.mode() == _enum(QgsLayoutItemLabel, "Mode", "ModeHtml")
+    if html_mode:
         font.setPointSizeF(size_pt)
         structure = extract_structure(text, font, size_pt, color)
         tables = [e for e in structure if e["type"] == "table"]
@@ -374,6 +426,43 @@ def export_label(item, pkg, spread, ctx):
         for p in paragraphs:
             p["align"] = halign
 
+    if not html_mode:
+        # ---- Font-mode typography that QgsTextRenderer would draw ----
+        # letter/word spacing + QFont capitalization
+        for p in paragraphs:
+            for r in p["runs"]:
+                annotate_run_from_font(r, font, size_pt)
+                apply_case_transforms(r)
+        _apply_tf_caps(tf, paragraphs)
+        # format-level line spacing
+        try:
+            lh = tf.lineHeight()
+            if tf.lineHeightUnit() == _render_unit("Percentage"):
+                if lh and abs(lh - 1.0) > 0.001:
+                    for p in paragraphs:
+                        p["line_height_pct"] = lh * 100.0
+            else:
+                lp = _render_size_to_pt(lh, tf.lineHeightUnit())
+                if lp > 0:
+                    for p in paragraphs:
+                        p["leading_pt"] = lp
+        except Exception:
+            pass
+        # buffer/halo -> outlined type (stroke straddles the outline, so
+        # weight = 2 x buffer radius)
+        try:
+            buf = tf.buffer()
+            if buf.enabled():
+                bpt = _render_size_to_pt(buf.size(), buf.sizeUnit())
+                for p in paragraphs:
+                    for r in p["runs"]:
+                        r["stroke_color"] = buf.color()
+                        r["stroke_weight_pt"] = 2.0 * bpt
+                        if buf.opacity() < 1.0:
+                            r["stroke_tint"] = buf.opacity() * 100.0
+        except Exception:
+            pass
+
     story_id = pkg.add_story(paragraphs)
 
     valign = {
@@ -390,6 +479,88 @@ def export_label(item, pkg, spread, ctx):
         bg_transparency = _transparency_xml(
             fill_alpha=item.backgroundColor().alpha()
         )
+
+    shadow_xml = ""
+    if not html_mode:
+        # text drop shadow -> object drop shadow on the (transparent)
+        # frame: shadows exactly the visible glyphs
+        try:
+            sh = tf.shadow()
+            if sh.enabled():
+                import math
+
+                d = _render_size_to_pt(sh.offsetDistance(), sh.offsetUnit())
+                a = math.radians(sh.offsetAngle())  # clockwise from north
+                blur = _render_size_to_pt(sh.blurRadius(), sh.blurRadiusUnit())
+                shadow_xml = (
+                    '<TransparencySetting><DropShadowSetting Mode="Drop" '
+                    'BlendMode="Multiply" Opacity="{op}" Radius="{blur}" '
+                    'XOffset="{dx}" YOffset="{dy}" EffectColor={col} '
+                    'KnockedOut="true"/></TransparencySetting>'.format(
+                        op=fmt(sh.opacity() * 100.0),
+                        blur=fmt(blur),
+                        dx=fmt(d * math.sin(a)),
+                        dy=fmt(-d * math.cos(a)),
+                        col=quoteattr(pkg.colors.ref(sh.color())),
+                    )
+                )
+        except Exception:
+            pass
+        # text background chip (Format > Background) - approximated with
+        # the frame bounds (QGIS sizes it to the text)
+        try:
+            bgs = tf.background()
+            if bgs.enabled():
+                t = enum_int(bgs.type())  # 0 rect,1 square,2 ellipse,3 circle,4 svg,5 marker
+                if t in (0, 1, 2, 3):
+                    tag = "Oval" if t in (2, 3) else "Rectangle"
+                    corner = ""
+                    if tag == "Rectangle":
+                        try:
+                            rad = bgs.radii()
+                            rpt = _render_size_to_pt(
+                                max(rad.width(), rad.height()), bgs.radiiUnit()
+                            )
+                            rpt = min(rpt, w_pt / 2.0, h_pt / 2.0)
+                            if rpt > 0:
+                                corner = " ".join(
+                                    '{}CornerOption="RoundedCorner" '
+                                    '{}CornerRadius="{}"'.format(c, c, fmt(rpt))
+                                    for c in ("TopLeft", "TopRight",
+                                              "BottomLeft", "BottomRight")
+                                ) + " "
+                        except Exception:
+                            pass
+                    path = ellipse_path(w_pt, h_pt) if tag == "Oval" else rect_path(w_pt, h_pt)
+                    spread.add(
+                        '<{tag} Self="{sid}" ContentType="Unassigned" '
+                        'ItemLayer="qxLayer1" '
+                        'AppliedObjectStyle="ObjectStyle/$ID/[None]" '
+                        'Visible="true" Name={nm} FillColor="{f}" '
+                        'StrokeColor="{s}" StrokeWeight="{sw}" '
+                        '{corner}ItemTransform="{tfm}">'
+                        "<Properties>{path}</Properties>"
+                        "</{tag}>".format(
+                            tag=tag,
+                            sid=pkg.idgen.next("chip"),
+                            nm=quoteattr((item.id() or "label") + "_bg"),
+                            f=pkg.colors.ref(bgs.fillColor()),
+                            s=pkg.colors.ref(bgs.strokeColor()),
+                            sw=fmt(_render_size_to_pt(bgs.strokeWidth(),
+                                                      bgs.strokeWidthUnit())),
+                            corner=corner,
+                            tfm=transform,
+                            path=path,
+                        )
+                    )
+                else:
+                    ctx.warn(
+                        "label '{}': SVG/marker text background not exported".format(
+                            item.id()
+                        )
+                    )
+        except Exception:
+            pass
 
     # QGIS frames are often sized exactly to the rendered text; InDesign's
     # composer can run a hair wider -> overset.  For labels with no visible
@@ -445,7 +616,7 @@ def export_label(item, pkg, spread, ctx):
         "{attrs} "
         'ItemTransform="{tf}">'
         "<Properties>{path}</Properties>"
-        "{bg_transparency}"
+        "{bg_transparency}{shadow}"
         '<TextFramePreference TextColumnCount="1" TextColumnGutter="12" '
         'FirstBaselineOffset="AscentOffset" AutoSizingType="{astype}"{autosize} '
         'VerticalJustification="{valign}">'
@@ -471,6 +642,7 @@ def export_label(item, pkg, spread, ctx):
             ix=fmt(inset_x),
             iy=fmt(inset_y),
             bg_transparency=bg_transparency,
+            shadow=shadow_xml,
         )
     )
 

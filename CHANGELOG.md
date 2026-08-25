@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.1 — 2026-08-25
+
+Font/typography fidelity release — fixes all ten font-related findings
+from the fidelity audit (see FIDELITY.md):
+
+- Text buffer/halo → outlined type (StrokeColor/StrokeWeight = 2×buffer
+  radius, opacity as StrokeTint)
+- Text drop shadow → InDesign object drop-shadow on the frame
+- Text background chip (Format > Background) → shape behind the frame,
+  rect/rounded/ellipse (approximated with frame bounds)
+- Data-defined text-format overrides (font/size/color per atlas feature)
+  evaluated via QgsTextFormat.updateDataDefinedProperties
+- Format-level line spacing (percentage → leading, absolute → leading)
+- Capitalization: AllCaps/SmallCaps as IDML attributes (text stays
+  editable), lowercase/title-case as text transforms
+- Letter spacing → Tracking (1/1000 em), word spacing → word-spacing
+  percentages
+- Character-level color alpha → FillTint
+- HTML <ul>/<ol> bullets/numbers synthesized with hanging indents
+- <sub>/<sup> → Position="Subscript"/"Superscript"
+- PyQt6 enum compatibility helper (enum_int) for all Qt enum reads
+
+
 ## 0.5.0 — 2026-08-25
 
 First public release. Developed and verified against a production

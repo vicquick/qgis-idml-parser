@@ -25,6 +25,14 @@ from .fonts import qfont_style_name
 
 PX2PT = 72.0 / 96.0
 
+
+def enum_int(v):
+    """int value of a Qt enum across PyQt5 (sip int) and PyQt6 (enum.Enum)."""
+    try:
+        return int(v)
+    except TypeError:
+        return int(v.value)
+
 _ALIGN = {
     int(Qt.AlignmentFlag.AlignLeft): "LeftAlign",
     int(Qt.AlignmentFlag.AlignHCenter): "CenterAlign",
@@ -36,6 +44,55 @@ _ALIGN = {
 def _alignment_name(alignment, default="LeftAlign"):
     horiz = int(alignment) & int(Qt.AlignmentFlag.AlignHorizontal_Mask)
     return _ALIGN.get(horiz, default)
+
+
+def annotate_run_from_font(run, font, size_pt):
+    """Capitalization / letter spacing / word spacing from a QFont.
+
+    Sets: caps ("AllCaps"/"SmallCaps"), lower/title (text transforms the
+    caller applies), tracking (1/1000 em), word_spacing_pt."""
+    try:
+        caps = enum_int(font.capitalization())
+        # QFont: MixedCase 0, AllUppercase 1, AllLowercase 2,
+        #        SmallCaps 3, Capitalize 4
+        if caps == 1:
+            run["caps"] = "AllCaps"
+        elif caps == 3:
+            run["caps"] = "SmallCaps"
+        elif caps == 2:
+            run["lower"] = True
+        elif caps == 4:
+            run["title"] = True
+    except Exception:
+        pass
+    try:
+        ls = font.letterSpacing()
+        lst = enum_int(font.letterSpacingType())
+        # QFont.SpacingType: PercentageSpacing 0, AbsoluteSpacing 1
+        if lst == 0 and ls and abs(ls - 100.0) > 0.01:
+            run["tracking"] = int(round((ls - 100.0) * 10.0))  # % of em -> 1/1000 em
+        elif lst == 1 and ls:
+            px_pt = ls * PX2PT
+            if size_pt:
+                run["tracking"] = int(round(px_pt / size_pt * 1000.0))
+    except Exception:
+        pass
+    try:
+        ws = font.wordSpacing()
+        if ws:
+            run["word_spacing_pt"] = ws * PX2PT
+    except Exception:
+        pass
+    return run
+
+
+def apply_case_transforms(run):
+    """Apply lower/title text transforms flagged by annotate_run_from_font."""
+    if run.pop("lower", False):
+        run["text"] = run["text"].lower()
+    if run.pop("title", False):
+        run["text"] = run["text"].title()
+    return run
 
 
 def _run_from_format(char_format, default_font, default_size_pt, default_color):
@@ -55,7 +112,7 @@ def _run_from_format(char_format, default_font, default_size_pt, default_color):
     brush = char_format.foreground()
     color = brush.color() if brush.style() != Qt.BrushStyle.NoBrush else default_color
 
-    return {
+    run = {
         "family": family,
         "style": qfont_style_name(font),
         "size_pt": float(size_pt),
@@ -63,6 +120,17 @@ def _run_from_format(char_format, default_font, default_size_pt, default_color):
         "underline": char_format.fontUnderline(),
         "strikeout": char_format.fontStrikeOut(),
     }
+    annotate_run_from_font(run, font, size_pt)
+    try:
+        va = enum_int(char_format.verticalAlignment())
+        # QTextCharFormat: AlignSuperScript 1, AlignSubScript 2
+        if va == 1:
+            run["position"] = "Superscript"
+        elif va == 2:
+            run["position"] = "Subscript"
+    except Exception:
+        pass
+    return run
 
 
 def _para_from_block(block, default_font, default_size_pt, default_color):
@@ -78,7 +146,7 @@ def _para_from_block(block, default_font, default_size_pt, default_color):
     }
     try:
         # 1 == QTextBlockFormat.ProportionalHeight
-        if int(bf.lineHeightType()) == 1 and bf.lineHeight() > 0:
+        if enum_int(bf.lineHeightType()) == 1 and bf.lineHeight() > 0:
             para["line_height_pct"] = bf.lineHeight()
     except Exception:
         pass
@@ -91,8 +159,32 @@ def _para_from_block(block, default_font, default_size_pt, default_color):
             )
             # Qt encodes <br/> inside a block as U+2028 line separator
             run["text"] = frag.text().replace(chr(0x2028), "\n")
+            apply_case_transforms(run)
             para["runs"].append(run)
         it += 1
+
+    # <ul>/<ol> markers live on the block's QTextList and never appear in
+    # fragment text - synthesize them as a literal leading run + hanging
+    # indent so bullets/numbers survive
+    try:
+        tl = block.textList()
+    except Exception:
+        tl = None
+    if tl is not None and para["runs"]:
+        style = enum_int(tl.format().style())
+        markers = {-1: "•", -2: "◦", -3: "▪"}
+        if style in markers:
+            marker = markers[style] + " "
+        else:
+            marker = (tl.itemText(block) or "•") + " "
+        first = dict(para["runs"][0])
+        first["text"] = marker
+        para["runs"].insert(0, first)
+        ind = max(1, tl.format().indent())
+        if not para["left_indent_pt"]:
+            para["left_indent_pt"] = 12.0 * ind
+        if not para["first_line_indent_pt"]:
+            para["first_line_indent_pt"] = -12.0
     return para
 
 

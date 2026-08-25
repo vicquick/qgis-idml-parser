@@ -23,11 +23,15 @@ from .mapping import export_item
 
 
 class ExportContext:
-    def __init__(self, links_dir, dpi=300, copy_fonts=True):
+    def __init__(self, links_dir, dpi=300, copy_fonts=True, warnings=None):
         self.links_dir = links_dir
         self.dpi = dpi
         self.copy_fonts = copy_fonts
+        self.warnings = warnings if warnings is not None else []
         self._asset_n = 0
+
+    def warn(self, message):
+        self.warnings.append(message)
 
     def next_asset_index(self):
         self._asset_n += 1
@@ -157,9 +161,9 @@ def export_layout_to_idml(
     page_h_pt = mm(page.pageSize().height())
 
     pkg = IdmlPackage(page_w_pt, page_h_pt, font_index=FontIndex())
-    ctx = ExportContext(links_dir, dpi=dpi, copy_fonts=copy_fonts)
-
     warnings = []
+    ctx = ExportContext(links_dir, dpi=dpi, copy_fonts=copy_fonts, warnings=warnings)
+
     features_done = 0
     if atlas:
         atl = layout.atlas()
