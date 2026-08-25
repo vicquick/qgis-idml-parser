@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.idml
+* Links/
+Document fonts/
+.DS_Store

@@ -1,0 +1,17 @@
+[general]
+name=Export IDML
+qgisMinimumVersion=3.34
+qgisMaximumVersion=4.99
+description=Export print layouts / atlases as native Adobe InDesign IDML: labels as editable text, shapes as native paths, maps as referenced vector PDFs, images as links, fonts as references (never embedded, per IDML spec).
+version=0.5.0
+author=Victor Budinic
+email=victor.budinic@gmail.com
+about=Bypasses the Qt PDF pipeline entirely (QGIS issues #48419/#49979: per-glyph text, subset fonts). Walks the QgsLayout item tree and writes the IDML package directly. HTML-mode labels are resolved through QTextDocument into styled runs. Legend/scalebar/tables are placed as vector PDF snippets (v1). Ships "<name> Links" and "Document fonts" folders like an InDesign package.
+tracker=https://github.com/vicquick/qgis-idml-parser/issues
+repository=https://github.com/vicquick/qgis-idml-parser
+tags=layout,export,indesign,idml,print,atlas,cartography
+category=Plugins
+icon=
+experimental=True
+deprecated=False
+supportsQt6=True
