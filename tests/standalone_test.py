@@ -147,6 +147,28 @@ def build_layout(project, layer, png_path):
     fancy.attemptResize(QgsLayoutSize(60, 12))
     layout.addLayoutItem(fancy)
 
+    # dashed stroke + second symbol layer + item opacity
+    dashed = QgsLayoutItemShape(layout)
+    dashed.setShapeType(_enum(QgsLayoutItemShape, "Shape", "Rectangle"))
+    dsym = QgsFillSymbol.createSimple(
+        {"color": "230,230,250", "outline_color": "60,60,120",
+         "outline_width": "0.8", "outline_style": "dash"}
+    )
+    from qgis.core import QgsSimpleFillSymbolLayer
+
+    extra_layer = QgsSimpleFillSymbolLayer.create(
+        {"color": "255,0,0,120", "outline_style": "no"}
+    )
+    dsym.appendSymbolLayer(extra_layer)
+    dashed.setSymbol(dsym)
+    try:
+        dashed.setItemOpacity(0.5)
+    except AttributeError:
+        pass
+    dashed.attemptMove(QgsLayoutPoint(140, 180))
+    dashed.attemptResize(QgsLayoutSize(40, 20))
+    layout.addLayoutItem(dashed)
+
     # HTML list + superscript
     lst = QgsLayoutItemLabel(layout)
     lst.setMode(_enum(QgsLayoutItemLabel, "Mode", "ModeHtml"))
@@ -246,6 +268,16 @@ def main():
     assert "<Leading" in all_stories, "line spacing lost"
     assert "•" in all_stories, "HTML list bullet lost"
     assert 'Position="Superscript"' in all_stories, "superscript lost"
+
+    # v0.6: dash style, multi-layer stacking, item opacity
+    sp = "".join(
+        z.read(n).decode("utf-8") for n in z.namelist() if n.startswith("Spreads/")
+    )
+    graphic = z.read("Resources/Graphic.xml").decode("utf-8")
+    assert 'StrokeType="StrokeStyle/qxDash' in sp, "dashed stroke lost"
+    assert "DashedStrokeStyle" in graphic, "dash style not registered"
+    assert "_l2" in sp, "second symbol layer lost"
+    assert 'Opacity="50"' in sp, "item opacity lost"
     if result["warnings"]:
         print("EXPORT WARNINGS:", result["warnings"])
     print("VALIDATION:", "FAILED" if errors else "OK")

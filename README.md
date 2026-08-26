@@ -110,17 +110,20 @@ One bad item never aborts an export — it is skipped and reported in
 
 ## Known limitations / fidelity gaps
 
-See [FIDELITY.md](FIDELITY.md) for the audited list of things that can
-render differently from QGIS, with severity and workarounds. Highlights:
+See [FIDELITY.md](FIDELITY.md): all 36 audited findings are fixed as of
+0.6.0, except three with no practical IDML equivalent (character
+highlight spans, font-file first-baseline metrics, dpi-dependent
+hairlines in placed PDFs) — those are documented and warned about
+where detectable. Remaining by-design simplifications:
 
 - Labels **inside map content** are outlined/fragmented inside the
   placed map PDF (roadmap: native map labels via `QgsLabelingResults`).
 - Legends/scale bars are placed PDFs, not native text (roadmap: rebuild
   from the legend model).
-- All colors are written as RGB process colors.
-- Dashed strokes, gradient fills and symbol layers beyond the first are
-  simplified to solid fill/stroke.
-- Multi-page layouts assume every page has page 1's size.
+- Colors are RGB process colors (pure black maps to the K-only [Black]
+  swatch); CMYK conversion is left to the print workflow.
+- Gradient and pattern fills use their base color (symbol layers are
+  otherwise exported layer-by-layer, dashes included).
 
 ## Tests
 

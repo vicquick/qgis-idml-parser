@@ -117,20 +117,38 @@ def file_uri(path):
 
 def item_frame_attrs(item, colors):
     """FillColor / StrokeColor attributes from QGIS frame+background."""
+    attrs, _ = item_frame_style(item, colors)
+    return attrs
+
+
+def item_frame_style(item, colors, extra_opacity=1.0, blend=None, shadow_inner=""):
+    """(attribute-string, transparency-xml) for an item's frame/background,
+    honoring semi-transparent background and frame stroke colors plus the
+    item-level opacity/blend."""
     attrs = []
+    fill_alpha = 255
+    stroke_alpha = 255
     if item.hasBackground():
-        attrs.append('FillColor="{}"'.format(colors.ref(item.backgroundColor())))
+        bg = item.backgroundColor()
+        attrs.append('FillColor="{}"'.format(colors.ref(bg)))
+        fill_alpha = bg.alpha()
     else:
         attrs.append('FillColor="Swatch/None"')
     if item.frameEnabled():
-        attrs.append('StrokeColor="{}"'.format(colors.ref(item.frameStrokeColor())))
+        fc = item.frameStrokeColor()
+        attrs.append('StrokeColor="{}"'.format(colors.ref(fc)))
+        stroke_alpha = fc.alpha()
         w = item.frameStrokeWidth()
         w_pt = w.length() * _unit_to_pt_factor(w.units())
         attrs.append('StrokeWeight="{}"'.format(fmt(w_pt)))
     else:
         attrs.append('StrokeColor="Swatch/None"')
         attrs.append('StrokeWeight="0"')
-    return " ".join(attrs)
+    transparency = _transparency_xml(
+        extra_opacity, fill_alpha, stroke_alpha,
+        blend_mode=blend, shadow_inner=shadow_inner,
+    )
+    return " ".join(attrs), transparency
 
 
 def _unit_to_pt_factor(unit):
@@ -167,20 +185,24 @@ def item_geometry(item, spread):
     w_pt = mm(r.width())
     h_pt = mm(r.height())
     ox, oy = spread.page_offset()
-    page = None
+    # position relative to the spread's OWN page (set by the exporter),
+    # so an item straddling two pages lands correctly on both spreads
+    px = getattr(spread, "page_scene_x", None)
+    py = getattr(spread, "page_scene_y", None)
+    if px is None:
+        try:
+            page = item.layout().pageCollection().page(max(0, item.page()))
+            px, py = page.pos().x(), page.pos().y()
+        except Exception:
+            px = py = 0.0
+    tx = ox + mm(item.pos().x() - px)
+    ty = oy + mm(item.pos().y() - py)
     try:
-        if item.page() >= 0:
-            page = item.layout().pageCollection().page(item.page())
+        rot = item.rotation()  # live rotation incl. data-defined override
     except Exception:
-        pass
-    if page is not None:
-        tx = ox + mm(item.pos().x() - page.pos().x())
-        ty = oy + mm(item.pos().y() - page.pos().y())
-    else:
-        pos = item.pagePos()  # fallback; correct for UpperLeft reference
-        tx = ox + mm(pos.x())
-        ty = oy + mm(pos.y())
-    rot = item.itemRotation()
+        rot = 0
+    if not rot:
+        rot = item.itemRotation()
     if rot:
         # pos() is ALREADY centre-pivot adjusted by QGIS
         # (setItemRotation(..., adjustPosition=True)) - rotate about the
@@ -203,7 +225,7 @@ def _pdf_writer(path, w_pt, h_pt, dpi):
 
 
 def placed_pdf_xml(idgen, colors, item_attrs, w_pt, h_pt, transform, pdf_path,
-                   name='"$ID/"'):
+                   name='"$ID/"', extra_xml=""):
     """Rectangle frame + placed PDF + Link (referenced, never embedded)."""
     rect_id = idgen.next("fr")
     pdf_id = idgen.next("pdf")
@@ -213,6 +235,7 @@ def placed_pdf_xml(idgen, colors, item_attrs, w_pt, h_pt, transform, pdf_path,
         'AppliedObjectStyle="ObjectStyle/$ID/[Normal Graphics Frame]" '
         'Visible="true" Name={name} {attrs} ItemTransform="{tf}">'
         "<Properties>{path}</Properties>"
+        "{extra}"
         '<PDF Self="{pid}" ItemTransform="1 0 0 1 0 0" Visible="true" Name="$ID/" '
         'GrayVectorPolicy="IgnoreAll" RGBVectorPolicy="IgnoreAll" '
         'CMYKVectorPolicy="IgnoreAll" AppliedObjectStyle="ObjectStyle/$ID/[None]">'
@@ -233,6 +256,7 @@ def placed_pdf_xml(idgen, colors, item_attrs, w_pt, h_pt, transform, pdf_path,
             lid=link_id,
             name=name,
             attrs=item_attrs,
+            extra=extra_xml,
             tf=transform,
             path=rect_path(w_pt, h_pt),
             w=fmt(w_pt),
@@ -463,6 +487,12 @@ def export_label(item, pkg, spread, ctx):
         except Exception:
             pass
 
+    if any(r.get("highlight_dropped") for p in paragraphs for r in p["runs"]):
+        ctx.warn(
+            "label '{}': inline background-color highlight has no IDML "
+            "equivalent and was dropped".format(item.id())
+        )
+
     story_id = pkg.add_story(paragraphs)
 
     valign = {
@@ -474,13 +504,7 @@ def export_label(item, pkg, spread, ctx):
     inset_x = mm(item.marginX())
     inset_y = mm(item.marginY())
 
-    bg_transparency = ""
-    if item.hasBackground() and 0 < item.backgroundColor().alpha() < 255:
-        bg_transparency = _transparency_xml(
-            fill_alpha=item.backgroundColor().alpha()
-        )
-
-    shadow_xml = ""
+    shadow_inner = ""
     if not html_mode:
         # text drop shadow -> object drop shadow on the (transparent)
         # frame: shadows exactly the visible glyphs
@@ -492,11 +516,11 @@ def export_label(item, pkg, spread, ctx):
                 d = _render_size_to_pt(sh.offsetDistance(), sh.offsetUnit())
                 a = math.radians(sh.offsetAngle())  # clockwise from north
                 blur = _render_size_to_pt(sh.blurRadius(), sh.blurRadiusUnit())
-                shadow_xml = (
-                    '<TransparencySetting><DropShadowSetting Mode="Drop" '
+                shadow_inner = (
+                    '<DropShadowSetting Mode="Drop" '
                     'BlendMode="Multiply" Opacity="{op}" Radius="{blur}" '
                     'XOffset="{dx}" YOffset="{dy}" EffectColor={col} '
-                    'KnockedOut="true"/></TransparencySetting>'.format(
+                    'KnockedOut="true"/>'.format(
                         op=fmt(sh.opacity() * 100.0),
                         blur=fmt(blur),
                         dx=fmt(d * math.sin(a)),
@@ -569,7 +593,8 @@ def export_label(item, pkg, spread, ctx):
     # impossible.  Multi-line text only grows in height (width growth
     # would unwrap paragraphs).
     autosize_attrs = ""
-    if not item.hasBackground() and not item.frameEnabled():
+    boxed = item.hasBackground() or item.frameEnabled()
+    if True:
         # A label counts as single-line ONLY if its natural (unwrapped)
         # width fits the QGIS frame - if QGIS wrapped it, the frame width
         # is authoritative and must arrive unchanged in the IDML.
@@ -580,6 +605,10 @@ def export_label(item, pkg, spread, ctx):
             or _natural_width_pt(paragraphs) > inner_w * 1.05
         )
         as_type = "HeightOnly" if multiline else "HeightAndWidth"
+        if boxed:
+            # visible box: keep exact QGIS size unless text would overset,
+            # then only grow downward (min height = the QGIS height)
+            as_type = "HeightOnly"
         v = {"TopAlign": "Top", "CenterAlign": "Center", "BottomAlign": "Bottom"}[valign]
         h = {"LeftAlign": "Left", "CenterAlign": "Center", "RightAlign": "Right",
              "FullyJustified": "Left"}[halign]
@@ -601,11 +630,21 @@ def export_label(item, pkg, spread, ctx):
         no_breaks = "true" if as_type == "HeightAndWidth" else "false"
         autosize_attrs = (
             ' AutoSizingReferencePoint="{}" '
-            'UseMinimumHeightForAutoSizing="false" '
-            'UseNoLineBreaksForAutoSizing="{}"'.format(ref, no_breaks)
+            'UseMinimumHeightForAutoSizing="{}" '
+            'UseNoLineBreaksForAutoSizing="{}"'.format(
+                ref, "true" if boxed else "false", no_breaks
+            )
         )
-    else:
-        as_type = None
+
+    _lbl_op, _lbl_blend = _item_effects(item, ctx)
+    if _lbl_blend is None:
+        try:
+            _lbl_blend = _BLEND_MODES.get(enum_int(tf.blendMode()))
+        except Exception:
+            pass
+    _lbl_attrs, frame_transparency = item_frame_style(
+        item, pkg.colors, _lbl_op, _lbl_blend, shadow_inner=shadow_inner
+    )
 
     frame_id = pkg.idgen.next("tf")
     spread.add(
@@ -616,7 +655,7 @@ def export_label(item, pkg, spread, ctx):
         "{attrs} "
         'ItemTransform="{tf}">'
         "<Properties>{path}</Properties>"
-        "{bg_transparency}{shadow}"
+        "{frame_transparency}"
         '<TextFramePreference TextColumnCount="1" TextColumnGutter="12" '
         'FirstBaselineOffset="AscentOffset" AutoSizingType="{astype}"{autosize} '
         'VerticalJustification="{valign}">'
@@ -633,7 +672,7 @@ def export_label(item, pkg, spread, ctx):
             fid=frame_id,
             sid=story_id,
             name=_item_name(item),
-            attrs=item_frame_attrs(item, pkg.colors),
+            attrs=_lbl_attrs,
             tf=transform,
             path=rect_path(w_pt, h_pt),
             valign=valign,
@@ -641,8 +680,7 @@ def export_label(item, pkg, spread, ctx):
             autosize=autosize_attrs,
             ix=fmt(inset_x),
             iy=fmt(inset_y),
-            bg_transparency=bg_transparency,
-            shadow=shadow_xml,
+            frame_transparency=frame_transparency,
         )
     )
 
@@ -660,17 +698,56 @@ def _item_name(item):
     return quoteattr(name or "$ID/")
 
 
-def _transparency_xml(symbol_opacity=1.0, fill_alpha=255, stroke_alpha=255):
+# QPainter.CompositionMode -> IDML BlendingSetting BlendMode
+_BLEND_MODES = {
+    13: "Multiply", 14: "Screen", 15: "Overlay", 16: "Darken",
+    17: "Lighten", 18: "ColorDodge", 19: "ColorBurn", 20: "HardLight",
+    21: "SoftLight", 22: "Difference", 23: "Exclusion",
+}
+
+
+def _item_effects(item, ctx=None):
+    """(opacity 0..1, blend-mode-name-or-None) from the item Rendering tab."""
+    opacity = 1.0
+    blend = None
+    try:
+        opacity = item.itemOpacity()
+    except Exception:
+        pass
+    try:
+        mode = enum_int(item.blendMode())
+        blend = _BLEND_MODES.get(mode)
+        if blend is None and mode not in (0,):
+            if ctx is not None:
+                ctx.warn(
+                    "item '{}': blend mode {} has no IDML equivalent".format(
+                        getattr(item, "id", lambda: "?")(), mode
+                    )
+                )
+    except Exception:
+        pass
+    return opacity, blend
+
+
+def _transparency_xml(object_opacity=1.0, fill_alpha=255, stroke_alpha=255,
+                      blend_mode=None, shadow_inner=""):
     """IDML transparency children for a page item.
 
-    QGIS symbol-level opacity -> object TransparencySetting;
+    Object-level opacity/blend/shadow live in ONE <TransparencySetting>;
     partial color alphas -> Fill/StrokeTransparencySetting."""
     parts = []
-    if symbol_opacity < 0.999:
-        parts.append(
-            '<TransparencySetting><BlendingSetting Opacity="{}"/>'
-            "</TransparencySetting>".format(fmt(symbol_opacity * 100.0))
-        )
+    bs_attrs = []
+    if object_opacity < 0.999:
+        bs_attrs.append('Opacity="{}"'.format(fmt(object_opacity * 100.0)))
+    if blend_mode:
+        bs_attrs.append('BlendMode="{}"'.format(blend_mode))
+    inner = ""
+    if bs_attrs:
+        inner += "<BlendingSetting {}/>".format(" ".join(bs_attrs))
+    if shadow_inner:
+        inner += shadow_inner
+    if inner:
+        parts.append("<TransparencySetting>{}</TransparencySetting>".format(inner))
     if 0 < fill_alpha < 255:
         parts.append(
             '<FillTransparencySetting><BlendingSetting Opacity="{}"/>'
@@ -708,28 +785,88 @@ def _dd_color(sl, prop_name, ctx, default):
         return default
 
 
-def _fill_stroke_from_symbol(symbol, colors, item=None):
-    """Best-effort fill/stroke from a QgsFillSymbol's first simple layer.
+# Qt.PenStyle -> dash pattern in stroke-width multiples
+_PEN_DASH = {
+    2: (4, 2),               # DashLine
+    3: (1, 2),               # DotLine
+    4: (4, 2, 1, 2),         # DashDotLine
+    5: (4, 2, 1, 2, 1, 2),   # DashDotDotLine
+}
+_PEN_CAPS = {0x00: "ButtEndCap", 0x10: "ProjectingEndCap", 0x20: "RoundEndCap"}
+_PEN_JOINS = {0x00: "MiterEndJoin", 0x40: "BevelEndJoin", 0x80: "RoundEndJoin"}
 
-    Data-defined fill/stroke colors are evaluated against the item's
-    expression context (atlas feature attributes).
-    Returns (fill_ref, stroke_ref, stroke_w_pt, transparency_xml)."""
-    fill = "Swatch/None"
-    stroke = "Swatch/None"
-    stroke_w_pt = 0.0
+
+def _stroke_extra_attrs(sl, stroke_w_pt, colors):
+    """StrokeType (dash pattern) + EndCap/EndJoin attrs from a symbol layer."""
+    attrs = ""
+    try:
+        pen_style = None
+        if hasattr(sl, "penStyle"):
+            pen_style = enum_int(sl.penStyle())
+        elif hasattr(sl, "strokeStyle"):
+            pen_style = enum_int(sl.strokeStyle())
+        dash_pt = None
+        if getattr(sl, "useCustomDashPattern", lambda: False)():
+            vec = sl.customDashVector()
+            unit = sl.customDashPatternUnit() if hasattr(sl, "customDashPatternUnit") else None
+            dash_pt = [
+                max(0.1, _render_size_to_pt(v, unit) if unit is not None else v * MM2PT)
+                for v in vec
+            ]
+        elif pen_style in _PEN_DASH:
+            w = max(stroke_w_pt, 0.75)
+            dash_pt = [max(0.1, m * w) for m in _PEN_DASH[pen_style]]
+        if dash_pt:
+            attrs += ' StrokeType="{}"'.format(colors.stroke_style(dash_pt))
+    except Exception:
+        pass
+    try:
+        cap = None
+        if hasattr(sl, "penCapStyle"):
+            cap = _PEN_CAPS.get(enum_int(sl.penCapStyle()))
+        if cap and cap != "ButtEndCap":
+            attrs += ' EndCap="{}"'.format(cap)
+    except Exception:
+        pass
+    try:
+        join = None
+        if hasattr(sl, "penJoinStyle"):
+            join = _PEN_JOINS.get(enum_int(sl.penJoinStyle()))
+        if join and join != "MiterEndJoin":
+            attrs += ' EndJoin="{}"'.format(join)
+    except Exception:
+        pass
+    return attrs
+
+
+def _symbol_layer_styles(symbol, colors, item=None):
+    """All symbol layers, bottom-to-top, as IDML style dicts.
+
+    QGIS lists layer 0 on TOP and renders the list bottom-up, so the
+    emission order here is reversed(range(count)).
+    Returns (layers, symbol_opacity); layers may be empty."""
+    layers = []
     opacity = 1.0
-    fill_alpha = 255
-    stroke_alpha = 255
     ctx = None
     if item is not None:
         try:
             ctx = item.createExpressionContext()
         except Exception:
             ctx = None
+    if not symbol or symbol.symbolLayerCount() == 0:
+        return layers, opacity
     try:
-        if symbol and symbol.symbolLayerCount() > 0:
-            opacity = symbol.opacity()
-            sl = symbol.symbolLayer(0)
+        opacity = symbol.opacity()
+    except Exception:
+        pass
+    for li in reversed(range(symbol.symbolLayerCount())):
+        sl = symbol.symbolLayer(li)
+        fill = "Swatch/None"
+        stroke = "Swatch/None"
+        stroke_w_pt = 0.0
+        fill_alpha = 255
+        stroke_alpha = 255
+        try:
             if hasattr(sl, "fillColor") and sl.fillColor().alpha() > 0:
                 if getattr(sl, "brushStyle", None) is None or sl.brushStyle() != Qt.BrushStyle.NoBrush:
                     fc = _dd_color(sl, "FillColor", ctx, sl.fillColor())
@@ -752,19 +889,51 @@ def _fill_stroke_from_symbol(symbol, colors, item=None):
                         if stroke_w_pt <= 0:
                             stroke_w_pt = 0.5
             elif hasattr(sl, "color") and fill == "Swatch/None":
-                fill = colors.ref(sl.color())
-                fill_alpha = sl.color().alpha()
-    except Exception:
-        pass
-    transparency = _transparency_xml(opacity, fill_alpha, stroke_alpha)
-    return fill, stroke, stroke_w_pt, transparency
+                c = _dd_color(sl, "StrokeColor", ctx, sl.color()) if hasattr(sl, "width") else sl.color()
+                # line symbol layers: 'color' IS the stroke
+                if hasattr(sl, "width"):
+                    stroke = colors.ref(c)
+                    stroke_alpha = c.alpha()
+                    if hasattr(sl, "widthUnit"):
+                        stroke_w_pt = _render_size_to_pt(sl.width(), sl.widthUnit())
+                    else:
+                        stroke_w_pt = sl.width() * MM2PT
+                else:
+                    fill = colors.ref(c)
+                    fill_alpha = c.alpha()
+        except Exception:
+            continue
+        layers.append({
+            "fill": fill,
+            "stroke": stroke,
+            "stroke_w_pt": stroke_w_pt,
+            "fill_alpha": fill_alpha,
+            "stroke_alpha": stroke_alpha,
+            "extra_attrs": _stroke_extra_attrs(sl, stroke_w_pt, colors),
+        })
+    return layers, opacity
+
+
+def _fill_stroke_from_symbol(symbol, colors, item=None):
+    """Single-layer compatibility wrapper (topmost layer's style)."""
+    layers, opacity = _symbol_layer_styles(symbol, colors, item=item)
+    if not layers:
+        return "Swatch/None", "Swatch/None", 0.0, ""
+    top = layers[-1]
+    transparency = _transparency_xml(
+        opacity, top["fill_alpha"], top["stroke_alpha"]
+    )
+    return top["fill"], top["stroke"], top["stroke_w_pt"], transparency
 
 
 def export_shape(item, pkg, spread, ctx):
     w_pt, h_pt, transform = item_geometry(item, spread)
-    fill, stroke, stroke_w, transparency = _fill_stroke_from_symbol(
-        item.symbol(), pkg.colors, item=item
-    )
+    layers, sym_opacity = _symbol_layer_styles(item.symbol(), pkg.colors, item=item)
+    if not layers:
+        layers = [{"fill": "Swatch/None", "stroke": "Swatch/None",
+                   "stroke_w_pt": 0.0, "fill_alpha": 255, "stroke_alpha": 255,
+                   "extra_attrs": ""}]
+    item_opacity, blend = _item_effects(item, ctx)
 
     shape_type = item.shapeType()
     corner_attrs = ""
@@ -789,28 +958,41 @@ def export_shape(item, pkg, spread, ctx):
                 for c in ("TopLeft", "TopRight", "BottomLeft", "BottomRight")
             ) + " "
 
-    self_id = pkg.idgen.next("sh")
-    spread.add(
-        '<{tag} Self="{sid}" ContentType="Unassigned" ItemLayer="qxLayer1" '
-        'AppliedObjectStyle="ObjectStyle/$ID/[None]" Visible="true" Name={name} '
-        'FillColor="{fill}" StrokeColor="{stroke}" StrokeWeight="{sw}" '
-        "{corners}"
-        'ItemTransform="{tf}">'
-        "<Properties>{path}</Properties>"
-        "{transparency}"
-        "</{tag}>".format(
-            tag=tag,
-            sid=self_id,
-            name=_item_name(item),
-            fill=fill,
-            stroke=stroke,
-            sw=fmt(stroke_w),
-            corners=corner_attrs,
-            tf=transform,
-            path=path,
-            transparency=transparency,
+    # one IDML shape per symbol layer, bottom-to-top
+    for li, lay in enumerate(layers):
+        transparency = _transparency_xml(
+            sym_opacity * item_opacity,
+            lay["fill_alpha"],
+            lay["stroke_alpha"],
+            blend_mode=blend,
         )
-    )
+        name = _item_name(item)
+        if len(layers) > 1 and li < len(layers) - 1:
+            name = quoteattr("{}_l{}".format(
+                (item.id() or "shape"), len(layers) - li))
+        self_id = pkg.idgen.next("sh")
+        spread.add(
+            '<{tag} Self="{sid}" ContentType="Unassigned" ItemLayer="qxLayer1" '
+            'AppliedObjectStyle="ObjectStyle/$ID/[None]" Visible="true" Name={name} '
+            'FillColor="{fill}" StrokeColor="{stroke}" StrokeWeight="{sw}"{extra} '
+            "{corners}"
+            'ItemTransform="{tf}">'
+            "<Properties>{path}</Properties>"
+            "{transparency}"
+            "</{tag}>".format(
+                tag=tag,
+                sid=self_id,
+                name=name,
+                fill=lay["fill"],
+                stroke=lay["stroke"],
+                sw=fmt(lay["stroke_w_pt"]),
+                extra=lay["extra_attrs"],
+                corners=corner_attrs,
+                tf=transform,
+                path=path,
+                transparency=transparency,
+            )
+        )
 
 
 def _nodes_to_points(item):
@@ -827,28 +1009,42 @@ def export_polygon(item, pkg, spread, ctx):
         points = []
     if len(points) < 2:
         return export_fallback(item, pkg, spread, ctx)
-    fill, stroke, stroke_w, transparency = _fill_stroke_from_symbol(
-        item.symbol(), pkg.colors, item=item
-    )
-    self_id = pkg.idgen.next("pg")
-    spread.add(
-        '<Polygon Self="{sid}" ContentType="Unassigned" ItemLayer="qxLayer1" '
-        'AppliedObjectStyle="ObjectStyle/$ID/[None]" Visible="true" Name={name} '
-        'FillColor="{fill}" StrokeColor="{stroke}" StrokeWeight="{sw}" '
-        'ItemTransform="{tf}">'
-        "<Properties>{path}</Properties>"
-        "{transparency}"
-        "</Polygon>".format(
-            sid=self_id,
-            name=_item_name(item),
-            fill=fill,
-            stroke=stroke,
-            sw=fmt(stroke_w),
-            tf=transform,
-            path=polygon_path(points, closed=True),
-            transparency=transparency,
+    layers, sym_opacity = _symbol_layer_styles(item.symbol(), pkg.colors, item=item)
+    if not layers:
+        layers = [{"fill": "Swatch/None", "stroke": "Swatch/None",
+                   "stroke_w_pt": 0.0, "fill_alpha": 255, "stroke_alpha": 255,
+                   "extra_attrs": ""}]
+    item_opacity, blend = _item_effects(item, ctx)
+    path = polygon_path(points, closed=True)
+    for li, lay in enumerate(layers):
+        name = _item_name(item)
+        if len(layers) > 1 and li < len(layers) - 1:
+            name = quoteattr("{}_l{}".format((item.id() or "poly"), len(layers) - li))
+        self_id = pkg.idgen.next("pg")
+        spread.add(
+            '<Polygon Self="{sid}" ContentType="Unassigned" ItemLayer="qxLayer1" '
+            'AppliedObjectStyle="ObjectStyle/$ID/[None]" Visible="true" Name={name} '
+            'FillColor="{fill}" StrokeColor="{stroke}" StrokeWeight="{sw}"{extra} '
+            'ItemTransform="{tf}">'
+            "<Properties>{path}</Properties>"
+            "{transparency}"
+            "</Polygon>".format(
+                sid=self_id,
+                name=name,
+                fill=lay["fill"],
+                stroke=lay["stroke"],
+                sw=fmt(lay["stroke_w_pt"]),
+                extra=lay["extra_attrs"],
+                tf=transform,
+                path=path,
+                transparency=_transparency_xml(
+                    sym_opacity * item_opacity,
+                    lay["fill_alpha"],
+                    lay["stroke_alpha"],
+                    blend_mode=blend,
+                ),
+            )
         )
-    )
 
 
 def export_polyline(item, pkg, spread, ctx):
@@ -859,35 +1055,35 @@ def export_polyline(item, pkg, spread, ctx):
         points = []
     if len(points) < 2:
         return export_fallback(item, pkg, spread, ctx)
-    stroke = "Color/Black"
-    stroke_w = 1.0
-    try:
-        sym = item.symbol()  # QgsLineSymbol
-        if sym and sym.symbolLayerCount() > 0:
-            sl = sym.symbolLayer(0)
-            if hasattr(sl, "color"):
-                stroke = pkg.colors.ref(sl.color())
-            if hasattr(sl, "width"):
-                if hasattr(sl, "widthUnit"):
-                    stroke_w = _render_size_to_pt(sl.width(), sl.widthUnit())
-                else:
-                    stroke_w = sl.width() * MM2PT  # symbol default unit is mm
-    except Exception:
-        pass
+    layers, sym_opacity = _symbol_layer_styles(item.symbol(), pkg.colors, item=item)
+    item_opacity, blend = _item_effects(item, ctx)
+    lay = layers[-1] if layers else {
+        "stroke": "Color/Black", "stroke_w_pt": 1.0, "stroke_alpha": 255,
+        "extra_attrs": "",
+    }
+    stroke = lay["stroke"] if lay["stroke"] != "Swatch/None" else "Color/Black"
+    stroke_w = lay["stroke_w_pt"] or 1.0
+    transparency = _transparency_xml(
+        sym_opacity * item_opacity, 255, lay.get("stroke_alpha", 255),
+        blend_mode=blend,
+    )
     self_id = pkg.idgen.next("gl")
     spread.add(
         '<GraphicLine Self="{sid}" ContentType="Unassigned" ItemLayer="qxLayer1" '
         'AppliedObjectStyle="ObjectStyle/$ID/[None]" Visible="true" Name={name} '
-        'FillColor="Swatch/None" StrokeColor="{stroke}" StrokeWeight="{sw}" '
+        'FillColor="Swatch/None" StrokeColor="{stroke}" StrokeWeight="{sw}"{extra} '
         'ItemTransform="{tf}">'
         "<Properties>{path}</Properties>"
+        "{transparency}"
         "</GraphicLine>".format(
             sid=self_id,
             name=_item_name(item),
             stroke=stroke,
             sw=fmt(stroke_w),
+            extra=lay.get("extra_attrs", ""),
             tf=transform,
             path=polygon_path(points, closed=False),
+            transparency=transparency,
         )
     )
 
@@ -932,18 +1128,21 @@ def export_picture(item, pkg, spread, ctx):
     w_pt, h_pt, transform = item_geometry(item, spread)
     linked = ctx.copy_link(src)
     ext = os.path.splitext(linked)[1].lower()
+    op, blend = _item_effects(item, ctx)
+    attrs, frame_transparency = item_frame_style(item, pkg.colors, op, blend)
 
     if ext == ".pdf":
         spread.add(
             placed_pdf_xml(
                 pkg.idgen,
                 pkg.colors,
-                item_frame_attrs(item, pkg.colors),
+                attrs,
                 w_pt,
                 h_pt,
                 transform,
                 linked,
                 name=_item_name(item),
+                extra_xml=frame_transparency,
             )
         )
         return
@@ -976,6 +1175,7 @@ def export_picture(item, pkg, spread, ctx):
         'AppliedObjectStyle="ObjectStyle/$ID/[Normal Graphics Frame]" '
         'Visible="true" Name={iname} {attrs} ItemTransform="{tf}">'
         "<Properties>{path}</Properties>"
+        "{frame_transparency}"
         '<Image Self="{iid}" ItemTransform="{sx} 0 0 {sy} 0 0" Visible="true" '
         'Name="$ID/" AppliedObjectStyle="ObjectStyle/$ID/[None]" '
         'ImageRenderingIntent="UseColorSettings" LocalDisplaySetting="Default">'
@@ -995,7 +1195,8 @@ def export_picture(item, pkg, spread, ctx):
             iid=img_id,
             lid=link_id,
             iname=_item_name(item),
-            attrs=item_frame_attrs(item, pkg.colors),
+            attrs=attrs,
+            frame_transparency=frame_transparency,
             tf=transform,
             path=rect_path(w_pt, h_pt),
             sx=fmt(sx),
@@ -1046,16 +1247,19 @@ def export_map(item, pkg, spread, ctx):
     finally:
         painter.end()
 
+    op, blend = _item_effects(item, ctx)
+    attrs, frame_transparency = item_frame_style(item, pkg.colors, op, blend)
     spread.add(
         placed_pdf_xml(
             pkg.idgen,
             pkg.colors,
-            item_frame_attrs(item, pkg.colors),
+            attrs,
             w_pt,
             h_pt,
             transform,
             pdf_path,
             name=_item_name(item),
+            extra_xml=frame_transparency,
         )
     )
 
@@ -1127,11 +1331,11 @@ def export_fallback(item, pkg, spread, ctx):
     # place axis-aligned at the bounding rect's scene position
     # (rotation is already baked into the rendered PDF)
     ox, oy = spread.page_offset()
-    page = item.layout().pageCollection().page(item.page()) if item.page() >= 0 else None
-    page_y = page.pos().y() if page else 0.0
-    page_x = page.pos().x() if page else 0.0
+    page_x = getattr(spread, "page_scene_x", 0.0)
+    page_y = getattr(spread, "page_scene_y", 0.0)
     tx = ox + mm(br.x() - page_x)
     ty = oy + mm(br.y() - page_y)
+    _fb_op, _fb_blend = _item_effects(item, ctx)
     spread.add(
         placed_pdf_xml(
             pkg.idgen,
@@ -1142,6 +1346,9 @@ def export_fallback(item, pkg, spread, ctx):
             identity_at(tx, ty),
             pdf_path,
             name=_item_name(item),
+            extra_xml=_transparency_xml(
+                _fb_op, blend_mode=_fb_blend
+            ),
         )
     )
 

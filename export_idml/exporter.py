@@ -76,10 +76,19 @@ class ExportContext:
 
 
 def _page_items(layout, page_index):
-    """Top-level exportable entities on one page, in paint (z) order.
+    """Top-level exportable entities intersecting one page, in paint (z)
+    order.  Intersection (not `page()`) so an item straddling a page
+    boundary appears on every spread it visibly touches, as in QGIS.
 
     Groups are entities: their children are exported inside them and are
     therefore excluded here (parentGroup() is not None)."""
+    page = layout.pageCollection().page(page_index)
+    from qgis.PyQt.QtCore import QRectF
+
+    page_rect = QRectF(
+        page.pos().x(), page.pos().y(),
+        page.pageSize().width(), page.pageSize().height(),
+    )
     items = []
     for it in layout.items():
         if not isinstance(it, QgsLayoutItem):
@@ -98,7 +107,8 @@ def _page_items(layout, page_index):
                 continue
         except AttributeError:
             pass
-        if it.page() != page_index:
+        inter = page_rect.intersected(it.sceneBoundingRect())
+        if inter.width() < 0.01 or inter.height() < 0.01:
             continue
         items.append(it)
 
@@ -117,11 +127,50 @@ def _page_items(layout, page_index):
     return items
 
 
+def _page_background(layout, pkg, spread, page):
+    """QGIS page background (Page Setup style symbol) -> full-bleed
+    rectangle at the bottom of the spread (skipped for plain white)."""
+    try:
+        sym = layout.pageCollection().pageStyleSymbol()
+        if sym is None or sym.symbolLayerCount() == 0:
+            return
+        sl = sym.symbolLayer(0)
+        color = sl.fillColor() if hasattr(sl, "fillColor") else sl.color()
+        if color.alpha() == 0:
+            return
+        if (color.red(), color.green(), color.blue(), color.alpha()) == (255, 255, 255, 255):
+            return  # default white = InDesign's own page
+        from .geom import rect_path, identity_at, fmt as _fmt
+        from .mapping import _transparency_xml
+
+        w, h = spread.w, spread.h
+        ox, oy = spread.page_offset()
+        spread.add(
+            '<Rectangle Self="{sid}" ContentType="Unassigned" ItemLayer="qxLayer1" '
+            'AppliedObjectStyle="ObjectStyle/$ID/[None]" Visible="true" '
+            'Name="page background" FillColor="{fill}" StrokeColor="Swatch/None" '
+            'StrokeWeight="0" ItemTransform="{tf}">'
+            "<Properties>{path}</Properties>{transparency}</Rectangle>".format(
+                sid=pkg.idgen.next("pbg"),
+                fill=pkg.colors.ref(color),
+                tf=identity_at(ox, oy),
+                path=rect_path(w, h),
+                transparency=_transparency_xml(fill_alpha=color.alpha()),
+            )
+        )
+    except Exception:
+        pass
+
+
 def _export_pages(layout, pkg, ctx, warnings):
     n_pages = layout.pageCollection().pageCount()
     for page_index in range(n_pages):
         page = layout.pageCollection().page(page_index)
         spread = pkg.new_spread(mm(page.pageSize().width()), mm(page.pageSize().height()))
+        # items straddling pages are positioned relative to THIS page
+        spread.page_scene_x = page.pos().x()
+        spread.page_scene_y = page.pos().y()
+        _page_background(layout, pkg, spread, page)
         for item in _page_items(layout, page_index):
             try:
                 export_item(item, pkg, spread, ctx)

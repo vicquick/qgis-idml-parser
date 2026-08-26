@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.0 — 2026-08-26
+
+Closes every remaining fidelity-audit finding (FIDELITY.md: 33 fixed,
+3 documented-no-IDML-equivalent — with export warnings where
+detectable):
+
+- Multi-layer symbols: one stacked IDML shape per symbol layer
+- Dashed/dotted/custom-dash strokes as native DashedStrokeStyle
+  (StrokeType), stroke cap/join (EndCap/EndJoin)
+- Item-level opacity + blend modes (Multiply/Screen/…) on every item
+  type; unified TransparencySetting builder
+- Semi-transparent frame background/stroke on maps, pictures, labels;
+  polyline transparency
+- Page background color as full-bleed bottom rectangle
+- Pure black → registration-safe K-only [Black] swatch
+- Items straddling a page boundary now appear on every spread they
+  touch (positions relative to each spread's own page)
+- Data-defined / live item rotation honored (QGraphicsItem.rotation())
+- Boxed labels (background/frame) get grow-down overset protection
+- HTML hyperlinks → real IDML Hyperlink/HyperlinkURLDestination
+- Custom tab stops → paragraph TabList
+- Text-format blend mode on labels; inline highlight spans warn
+
+
 ## 0.5.1 — 2026-08-25
 
 Font/typography fidelity release — fixes all ten font-related findings

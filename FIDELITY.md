@@ -1,12 +1,17 @@
 # Fidelity audit — QGIS vs InDesign rendering differences
 
 Result of a 42-agent adversarial audit (every finding verified against
-the source with a concrete visual-difference scenario). Items marked
-**FIXED** were resolved in 0.5.0 / 0.5.1; the rest are known,
+the source with a concrete visual-difference scenario). As of 0.6.0 every finding is either **FIXED** or explicitly
+*documented* (no practical IDML equivalent exists: character
+highlights, font-file baseline metrics, dpi-dependent hairlines —
+the exporter warns where it can detect them). Fixed across 0.5.0 /
+0.5.1 / 0.6.0; the rest are known,
 documented gaps — ordered by severity. PRs welcome.
 
 Out of scope by design: the *interior* of placed map / legend /
 scalebar / table PDFs is Qt-rendered and matches QGIS by construction.
+
+*documented = no practical fix exists in the IDML format; see detail.*
 
 | # | Status | Severity | Area | Finding |
 |---|--------|----------|------|---------|
@@ -21,31 +26,31 @@ scalebar / table PDFs is Qt-rendered and matches QGIS by construction.
 | 9 | **FIXED 0.5.1** | high | `text_runs.py` | Format-level line spacing (QgsTextFormat.lineHeight()) is ignored for plain 'Font' mode labels |
 | 10 | **FIXED 0.5.1** | high | `text_runs.py` | Text capitalization / case transform (all-caps, small caps) never read — produces a literal text mismatch, not just a style nuance |
 | 11 | **FIXED 0.5.1** | high | `text_runs.py` | HTML list markup (<ul>/<ol>/<li>) loses its bullet/number entirely, not just its indent style |
-| 12 | open | high | `idml_package.py` | Every custom color is written as RGB Process — the predefined CMYK Black swatch is dead code |
-| 13 | open | high | `mapping.py` | QgsLayoutItem.opacity() (the generic item Rendering-tab opacity slider) is never read for any item type |
-| 14 | open | high | `mapping.py` | Only symbolLayer(0) is ever read — multi-layer fill/line symbols lose every layer beyond the first |
-| 15 | open | high | `mapping.py` | Dashed/dotted/other pen styles are dropped — every stroke exports solid |
-| 16 | open | high | `mapping.py` | Page background color is ignored entirely — the InDesign page always renders with no fill |
-| 17 | open | high | `mapping.py` | Backgrounded/framed labels get no auto-size overset protection, despite the code's own documented risk |
+| 12 | **FIXED 0.6.0** | high | `idml_package.py` | Every custom color is written as RGB Process — the predefined CMYK Black swatch is dead code |
+| 13 | **FIXED 0.6.0** | high | `mapping.py` | QgsLayoutItem.opacity() (the generic item Rendering-tab opacity slider) is never read for any item type |
+| 14 | **FIXED 0.6.0** | high | `mapping.py` | Only symbolLayer(0) is ever read — multi-layer fill/line symbols lose every layer beyond the first |
+| 15 | **FIXED 0.6.0** | high | `mapping.py` | Dashed/dotted/other pen styles are dropped — every stroke exports solid |
+| 16 | **FIXED 0.6.0** | high | `mapping.py` | Page background color is ignored entirely — the InDesign page always renders with no fill |
+| 17 | **FIXED 0.6.0** | high | `mapping.py` | Backgrounded/framed labels get no auto-size overset protection, despite the code's own documented risk |
 | 18 | **FIXED 0.5.1** | high | `mapping.py` | Data-defined label text formatting (font family/size/color) is never evaluated |
 | 19 | **FIXED 0.5.1** | medium | `mapping.py` | QgsTextFormat.background() (shaped text background/chip) never read — conflated with item.hasBackground() |
 | 20 | **FIXED 0.5.1** | medium | `mapping.py` | QgsTextFormat.shadow() (text drop shadow) never read |
 | 21 | **FIXED 0.5.1** | medium | `text_runs.py` | Letter spacing / word spacing (QFont.letterSpacing()/wordSpacing()) never forwarded to IDML Tracking |
 | 22 | **FIXED 0.5.1** | medium | `idml_package.py` | Character-level color alpha (semi-transparent text) is silently made fully opaque |
 | 23 | **FIXED 0.5.1** | medium | `text_runs.py` | Sub/superscript spans (<sub>/<sup>) render as normal baseline text |
-| 24 | open | medium | `text_runs.py` | Custom tab stops are never emitted; a literal tab character falls back to InDesign's default tab grid |
-| 25 | open | medium | `mapping.py` | Data-defined (per-atlas-feature) item rotation is ignored |
-| 26 | open | medium | `exporter.py` | An item spanning a page boundary is placed on only one spread and is missing from the other |
-| 27 | open | medium | `mapping.py` | QgsLayoutItem.blendMode() is never read — everything exports as Normal blend |
-| 28 | open | medium | `mapping.py` | Stroke cap and join style are never read — always InDesign's default (butt cap / miter join) |
-| 29 | open | medium | `mapping.py` | Map/Picture frame background and stroke color always export fully opaque, even when semi-transparent in QGIS |
-| 30 | open | medium | `exporter.py` | Items straddling two layout pages are placed whole on one spread, missing on the adjacent one |
-| 31 | open | low | `mapping.py` | QgsTextFormat.blendMode() (and any text blend mode) is never applied |
-| 32 | open | low | `text_runs.py` | Inline background-color spans (CSS highlight) are dropped |
-| 33 | open | low | `text_runs.py` | Hyperlinks (<a href>) become inert, unlinked plain text |
-| 34 | open | low | `mapping.py` | FirstBaselineOffset is hardcoded to 'AscentOffset' for every text frame, independent of font or vAlign |
-| 35 | open | low | `mapping.py` | export_polyline never emits any transparency — a semi-transparent line stroke always renders fully opaque |
-| 36 | open | low | `mapping.py` | Export dpi silently controls hairline stroke width in map/fallback PDFs |
+| 24 | **FIXED 0.6.0** | medium | `text_runs.py` | Custom tab stops are never emitted; a literal tab character falls back to InDesign's default tab grid |
+| 25 | **FIXED 0.6.0** | medium | `mapping.py` | Data-defined (per-atlas-feature) item rotation is ignored |
+| 26 | **FIXED 0.6.0** | medium | `exporter.py` | An item spanning a page boundary is placed on only one spread and is missing from the other |
+| 27 | **FIXED 0.6.0** | medium | `mapping.py` | QgsLayoutItem.blendMode() is never read — everything exports as Normal blend |
+| 28 | **FIXED 0.6.0** | medium | `mapping.py` | Stroke cap and join style are never read — always InDesign's default (butt cap / miter join) |
+| 29 | **FIXED 0.6.0** | medium | `mapping.py` | Map/Picture frame background and stroke color always export fully opaque, even when semi-transparent in QGIS |
+| 30 | **FIXED 0.6.0** | medium | `exporter.py` | Items straddling two layout pages are placed whole on one spread, missing on the adjacent one |
+| 31 | **FIXED 0.6.0** | low | `mapping.py` | QgsTextFormat.blendMode() (and any text blend mode) is never applied |
+| 32 | documented* | low | `text_runs.py` | Inline background-color spans (CSS highlight) are dropped |
+| 33 | **FIXED 0.6.0** | low | `text_runs.py` | Hyperlinks (<a href>) become inert, unlinked plain text |
+| 34 | documented* | low | `mapping.py` | FirstBaselineOffset is hardcoded to 'AscentOffset' for every text frame, independent of font or vAlign |
+| 35 | **FIXED 0.6.0** | low | `mapping.py` | export_polyline never emits any transparency — a semi-transparent line stroke always renders fully opaque |
+| 36 | documented* | low | `mapping.py` | Export dpi silently controls hairline stroke width in map/fallback PDFs |
 
 ## Details
 
@@ -137,7 +142,7 @@ _para_from_block (lines 68-96) only walks block.begin() fragment text; _walk_fra
 
 **Suggested fix:** In _para_from_block, check block.textList(); when present, resolve the marker (list.itemText(block) for ordered lists, or the configured bullet glyph for unordered) and prepend it as a literal leading run, and derive left/first-line indent from the list format for a proper hanging-indent look.
 
-### 12. Every custom color is written as RGB Process — the predefined CMYK Black swatch is dead code
+### 12. Every custom color is written as RGB Process — the predefined CMYK Black swatch is dead code — **FIXED in 0.6.0**
 
 *high · `export_idml/idml_package.py`*
 
@@ -145,7 +150,7 @@ ColorRegistry.ref() (lines 63-70) keys purely on (r,g,b) and always emits '<Colo
 
 **Suggested fix:** Special-case (0,0,0)/near-black in ColorRegistry.ref() to return 'Color/Black' (K-only) instead of minting an RGB swatch, and consider adding a document- or item-level option to author swatches as CMYK (Space="CMYK", converted via a fixed profile) when the export is known to target print, rather than always RGB.
 
-### 13. QgsLayoutItem.opacity() (the generic item Rendering-tab opacity slider) is never read for any item type
+### 13. QgsLayoutItem.opacity() (the generic item Rendering-tab opacity slider) is never read for any item type — **FIXED in 0.6.0**
 
 *high · `export_idml/mapping.py`*
 
@@ -153,7 +158,7 @@ A grep across mapping.py for opacity/blendMode shows the only opacity ever captu
 
 **Suggested fix:** Read item.opacity() for every item type and fold it into the object-level <TransparencySetting><BlendingSetting Opacity=.../></TransparencySetting> (multiplying with symbol.opacity() for shapes, since QGIS applies both).
 
-### 14. Only symbolLayer(0) is ever read — multi-layer fill/line symbols lose every layer beyond the first
+### 14. Only symbolLayer(0) is ever read — multi-layer fill/line symbols lose every layer beyond the first — **FIXED in 0.6.0**
 
 *high · `export_idml/mapping.py`*
 
@@ -161,7 +166,7 @@ _fill_stroke_from_symbol (line 557: 'sl = symbol.symbolLayer(0)') and export_pol
 
 **Suggested fix:** Loop over symbol.symbolLayerCount() and either merge additional simple layers into extra IDML page items (stacked shapes) or at minimum emit a warning listing dropped layers, similar to the existing per-item try/except warning mechanism in exporter.py.
 
-### 15. Dashed/dotted/other pen styles are dropped — every stroke exports solid
+### 15. Dashed/dotted/other pen styles are dropped — every stroke exports solid — **FIXED in 0.6.0**
 
 *high · `export_idml/mapping.py`*
 
@@ -169,7 +174,7 @@ The only check against a QGIS pen style is 'style_ok = sl.strokeStyle() != Qt.Pe
 
 **Suggested fix:** Read the symbol layer's dash pattern (customDashVector()/useCustomDashPattern(), or the PenStyle enum) and either emit a matching <StrokeStyle> (dash pattern) referenced via StrokeType, or at minimum map the common PenStyle values (Dash/Dot/DashDot) to IDML's built-in stroke styles ('$ID/Dashed (4 and 4)', etc.).
 
-### 16. Page background color is ignored entirely — the InDesign page always renders with no fill
+### 16. Page background color is ignored entirely — the InDesign page always renders with no fill — **FIXED in 0.6.0**
 
 *high · `export_idml/mapping.py`*
 
@@ -177,7 +182,7 @@ QgsLayoutItemPage's own page style (its background fill symbol, configurable per
 
 **Suggested fix:** Read page.pageStyleSymbol() (or equivalent) and emit a full-bleed Rectangle at the bottom of z-order on the Spread with that fill color (and its own transparency, since page backgrounds can also carry alpha).
 
-### 17. Backgrounded/framed labels get no auto-size overset protection, despite the code's own documented risk
+### 17. Backgrounded/framed labels get no auto-size overset protection, despite the code's own documented risk — **FIXED in 0.6.0**
 
 *high · `export_idml/mapping.py`*
 
@@ -233,7 +238,7 @@ _run_from_format (lines 41-65) never reads char_format.verticalAlignment() (Qt's
 
 **Suggested fix:** Read char_format.verticalAlignment() per run and set IDML's Position="Superscript"/"Subscript" on the corresponding CharacterStyleRange.
 
-### 24. Custom tab stops are never emitted; a literal tab character falls back to InDesign's default tab grid
+### 24. Custom tab stops are never emitted; a literal tab character falls back to InDesign's default tab grid — **FIXED in 0.6.0**
 
 *medium · `export_idml/text_runs.py`*
 
@@ -241,7 +246,7 @@ _para_from_block (lines 68-96) never reads block.tabPositions(). story_xml's par
 
 **Suggested fix:** Read block.tabPositions(), convert px to pt, and emit a <TabList> (<TabStop Alignment="LeftAlign" Position="..."/> per entry) as a paragraph Properties child in story_xml.
 
-### 25. Data-defined (per-atlas-feature) item rotation is ignored
+### 25. Data-defined (per-atlas-feature) item rotation is ignored — **FIXED in 0.6.0**
 
 *medium · `C:/Users/victor.budinic/Desktop/BIM/scripts/qgis2idml/export_idml/mapping.py`*
 
@@ -249,7 +254,7 @@ item_geometry() (line ~176) reads rot = item.itemRotation(). QGIS's own API doc 
 
 **Suggested fix:** Use item.rotation() (the live QGraphicsItem rotation, reflecting any data-defined override after refresh) instead of item.itemRotation() when computing rot in item_geometry(), or explicitly evaluate the ItemRotation data-defined property when active.
 
-### 26. An item spanning a page boundary is placed on only one spread and is missing from the other
+### 26. An item spanning a page boundary is placed on only one spread and is missing from the other — **FIXED in 0.6.0**
 
 *medium · `C:/Users/victor.budinic/Desktop/BIM/scripts/qgis2idml/export_idml/exporter.py`*
 
@@ -257,7 +262,7 @@ _page_items() (lines ~60-99) filters items strictly by if it.page() != page_inde
 
 **Suggested fix:** For items whose sceneBoundingRect() overlaps more than one page's rect, either clip/duplicate the item's placement onto each overlapping spread (positioned/clipped per page), or route such items through the export_fallback per-page rendered-PDF-snippet path (which already renders/crops relative to a given page) instead of a single native placement.
 
-### 27. QgsLayoutItem.blendMode() is never read — everything exports as Normal blend
+### 27. QgsLayoutItem.blendMode() is never read — everything exports as Normal blend — **FIXED in 0.6.0**
 
 *medium · `export_idml/mapping.py`*
 
@@ -265,7 +270,7 @@ _transparency_xml (lines 488-509) only ever writes <BlendingSetting Opacity="...
 
 **Suggested fix:** Map item.blendMode() (and symbol-layer blend mode for shapes, if set) to the BlendMode attribute of BlendingSetting.
 
-### 28. Stroke cap and join style are never read — always InDesign's default (butt cap / miter join)
+### 28. Stroke cap and join style are never read — always InDesign's default (butt cap / miter join) — **FIXED in 0.6.0**
 
 *medium · `export_idml/mapping.py`*
 
@@ -273,7 +278,7 @@ Nowhere in mapping.py is QgsSimpleLineSymbolLayer.penCapStyle() or penJoinStyle(
 
 **Suggested fix:** Map penCapStyle()/penJoinStyle() to IDML's StrokeCap ("Butt"/"Round"/"Projecting") and StrokeJoin ("Miter"/"Round"/"Bevel") attributes on Rectangle/Oval/Polygon/GraphicLine elements.
 
-### 29. Map/Picture frame background and stroke color always export fully opaque, even when semi-transparent in QGIS
+### 29. Map/Picture frame background and stroke color always export fully opaque, even when semi-transparent in QGIS — **FIXED in 0.6.0**
 
 *medium · `export_idml/mapping.py`*
 
@@ -281,7 +286,7 @@ item_frame_attrs (lines 111-126) builds FillColor/StrokeColor purely via ColorRe
 
 **Suggested fix:** Extend item_frame_attrs (or its callers) to compute FillTransparencySetting/StrokeTransparencySetting from backgroundColor().alpha() and frameStrokeColor().alpha() for every item type that uses it, the same way export_shape already does for symbol fill/stroke.
 
-### 30. Items straddling two layout pages are placed whole on one spread, missing on the adjacent one
+### 30. Items straddling two layout pages are placed whole on one spread, missing on the adjacent one — **FIXED in 0.6.0**
 
 *medium · `export_idml/exporter.py`*
 
@@ -289,7 +294,7 @@ _page_items(layout, page_index) (line 83: `if it.page() != page_index: continue`
 
 **Suggested fix:** When an item's bounds extend past its assigned page's edge into a neighbouring page, either clip the rendered snippet/geometry per page and emit a correspondingly-clipped second placement on the neighbouring spread, or at minimum add a warning (mirroring the existing per-item try/except in _export_pages) so multi-page-spanning items get flagged for manual review.
 
-### 31. QgsTextFormat.blendMode() (and any text blend mode) is never applied
+### 31. QgsTextFormat.blendMode() (and any text blend mode) is never applied — **FIXED in 0.6.0**
 
 *low · `export_idml/mapping.py`*
 
@@ -297,7 +302,7 @@ tf.blendMode() (e.g. Multiply, so label text visually mixes with what's undernea
 
 **Suggested fix:** Read tf.blendMode(), map the QPainter::CompositionMode to InDesign's blend-mode enum, and emit <TransparencySetting><BlendingSetting Mode="..." .../></TransparencySetting> on the TextFrame.
 
-### 32. Inline background-color spans (CSS highlight) are dropped
+### 32. Inline background-color spans (CSS highlight) are dropped — **documented, no practical IDML fix** (0.6.0 warns where detectable)
 
 *low · `export_idml/text_runs.py`*
 
@@ -305,7 +310,7 @@ _run_from_format only reads char_format.foreground() for run color (line 55-56);
 
 **Suggested fix:** Read char_format.background(); when it is a non-null brush, either approximate it with a small filled Rectangle behind the run or surface an export warning that inline highlight spans are unsupported.
 
-### 33. Hyperlinks (<a href>) become inert, unlinked plain text
+### 33. Hyperlinks (<a href>) become inert, unlinked plain text — **FIXED in 0.6.0**
 
 *low · `export_idml/text_runs.py`*
 
@@ -313,7 +318,7 @@ _run_from_format never reads char_format.isAnchor()/anchorHref(), and no Hyperli
 
 **Suggested fix:** Read anchorHref(); emit an IDML HyperlinkURLDestination plus a HyperlinkTextSource range over the run, or at minimum apply underline+link color as a visual fallback and log a warning that link functionality was dropped.
 
-### 34. FirstBaselineOffset is hardcoded to 'AscentOffset' for every text frame, independent of font or vAlign
+### 34. FirstBaselineOffset is hardcoded to 'AscentOffset' for every text frame, independent of font or vAlign — **documented, no practical IDML fix** (0.6.0 warns where detectable)
 
 *low · `export_idml/mapping.py`*
 
@@ -321,7 +326,7 @@ Both _export_table_label (~line 296) and export_label (~line 447) hardcode First
 
 **Suggested fix:** No bit-exact fix is available since InDesign derives this from font-file metrics, but consider validating AscentOffset vs LeadingOffset/FixedOffset empirically for the font families actually in use, and for BottomAlign/CenterAlign cases apply a small compensating vertical nudge to the ItemTransform ty computed from QFontMetricsF ascent (the pattern already used in _natural_width_pt).
 
-### 35. export_polyline never emits any transparency — a semi-transparent line stroke always renders fully opaque
+### 35. export_polyline never emits any transparency — a semi-transparent line stroke always renders fully opaque — **FIXED in 0.6.0**
 
 *low · `export_idml/mapping.py`*
 
@@ -329,7 +334,7 @@ export_polyline (lines 678-716) builds its GraphicLine's StrokeColor via 'pkg.co
 
 **Suggested fix:** Compute stroke alpha from sl.color().alpha() in export_polyline and append a StrokeTransparencySetting via _transparency_xml, mirroring export_shape's handling.
 
-### 36. Export dpi silently controls hairline stroke width in map/fallback PDFs
+### 36. Export dpi silently controls hairline stroke width in map/fallback PDFs — **documented, no practical IDML fix** (0.6.0 warns where detectable)
 
 *low · `export_idml/mapping.py`*
 

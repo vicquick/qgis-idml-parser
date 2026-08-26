@@ -55,19 +55,32 @@ class IdGen:
 
 
 class ColorRegistry:
-    """Collects RGB colors -> Resources/Graphic.xml <Color> entries."""
+    """Collects RGB colors + dashed stroke styles for Resources/Graphic.xml."""
 
     def __init__(self):
         self._colors = {}  # (r,g,b) -> self id
+        self._stroke_styles = {}  # dash tuple (pt) -> self id
 
     def ref(self, qcolor):
         """Return an IDML color reference for a QColor (or 'Swatch/None')."""
         if qcolor is None or qcolor.alpha() == 0:
             return "Swatch/None"
         key = (qcolor.red(), qcolor.green(), qcolor.blue())
+        if key == (0, 0, 0):
+            # registration-safe K-only black instead of RGB rich black
+            return "Color/Black"
         if key not in self._colors:
             self._colors[key] = "Color/R={} G={} B={}".format(*key)
         return self._colors[key]
+
+    def stroke_style(self, dash_array_pt):
+        """Register a dashed stroke style; returns its StrokeType ref."""
+        key = tuple(round(v, 3) for v in dash_array_pt)
+        if key not in self._stroke_styles:
+            self._stroke_styles[key] = "StrokeStyle/qxDash{}".format(
+                len(self._stroke_styles) + 1
+            )
+        return self._stroke_styles[key]
 
     def graphic_xml(self):
         parts = []
@@ -104,6 +117,20 @@ class ColorRegistry:
         parts.append(
             '<StrokeStyle Self="StrokeStyle/$ID/Solid" Name="$ID/Solid"/>'
         )
+        for dash, self_id in sorted(self._stroke_styles.items()):
+            items = "".join(
+                '<ListItem type="unit">{}</ListItem>'.format(fmt(v)) for v in dash
+            )
+            parts.append(
+                '<DashedStrokeStyle Self={sid} Name={name} '
+                'StrokeCornerAdjustment="None">'
+                '<Properties><DashArray type="list">{items}</DashArray></Properties>'
+                "</DashedStrokeStyle>".format(
+                    sid=quoteattr(self_id),
+                    name=quoteattr(self_id.split("/", 1)[1]),
+                    items=items,
+                )
+            )
         return _wrap("Graphic", "\n".join(parts) + "\n")
 
 
@@ -342,7 +369,8 @@ def _clean(text):
     return text.translate(_ILLEGAL_XML)
 
 
-def story_xml(story_id, paragraphs, color_registry, font_registry):
+def story_xml(story_id, paragraphs, color_registry, font_registry,
+              idgen=None, hyperlinks=None):
     """Build a Story from the neutral paragraph/run structure.
 
     IDML content model: each <ParagraphStyleRange> is one paragraph; the
@@ -384,6 +412,22 @@ def story_xml(story_id, paragraphs, color_registry, font_registry):
             'AppliedParagraphStyle="ParagraphStyle/$ID/NormalParagraphStyle" '
             "{}>".format(" ".join(para_attrs))
         )
+        tabs = para.get("tabs")
+        if tabs:
+            records = "".join(
+                '<ListItem type="record">'
+                '<Alignment type="enumeration">{align}</Alignment>'
+                '<AlignmentCharacter type="string">.</AlignmentCharacter>'
+                '<Leader type="string"></Leader>'
+                '<Position type="unit">{pos}</Position>'
+                "</ListItem>".format(align=align, pos=fmt(pos))
+                for pos, align in tabs
+            )
+            parts.append(
+                '<Properties><TabList type="list">{}</TabList></Properties>'.format(
+                    records
+                )
+            )
         runs = para["runs"]
         for ri, run in enumerate(runs):
             family, style = font_registry.use(run["family"], run["style"])
@@ -420,6 +464,15 @@ def story_xml(story_id, paragraphs, color_registry, font_registry):
                 tint = run.get("stroke_tint")
                 if tint is not None and tint < 100:
                     attrs.append('StrokeTint="{}"'.format(fmt(tint)))
+            href = run.get("href")
+            hts_id = None
+            if href and idgen is not None and hyperlinks is not None:
+                hts_id = idgen.next("hts")
+                parts.append(
+                    '<HyperlinkTextSource Self="{sid}" Name={name} '
+                    'Hidden="false">'.format(sid=hts_id, name=quoteattr(href))
+                )
+                hyperlinks.append((hts_id, href))
             parts.append("<CharacterStyleRange {}>".format(" ".join(attrs)))
             props = ["<AppliedFont type=\"string\">{}</AppliedFont>".format(escape(family))]
             leading_pt = para.get("leading_pt")
@@ -444,6 +497,8 @@ def story_xml(story_id, paragraphs, color_registry, font_registry):
             if needs_break and ri == len(runs) - 1:
                 parts.append("<Br/>")  # paragraph break lives IN the paragraph
             parts.append("</CharacterStyleRange>")
+            if hts_id is not None:
+                parts.append("</HyperlinkTextSource>")
         if needs_break and not runs:
             # empty paragraph still needs its terminating break
             parts.append(
@@ -467,6 +522,7 @@ class IdmlPackage:
         self.master_id = "qxMasterA"
         self.spreads = []  # Spread objects
         self.stories = []  # (story_id, xml)
+        self.hyperlinks = []  # (HyperlinkTextSource id, url)
 
     def new_spread(self, page_w_pt=None, page_h_pt=None):
         sp = Spread(
@@ -484,7 +540,10 @@ class IdmlPackage:
             # InDesign always writes at least one paragraph range
             paragraphs = [{"type": "para", "align": "LeftAlign", "runs": []}]
         story_id = self.idgen.next("st")
-        xml = story_xml(story_id, paragraphs, self.colors, self.fonts)
+        xml = story_xml(
+            story_id, paragraphs, self.colors, self.fonts,
+            idgen=self.idgen, hyperlinks=self.hyperlinks,
+        )
         self.stories.append((story_id, xml))
         return story_id
 
@@ -526,6 +585,19 @@ class IdmlPackage:
         parts.append('<idPkg:BackingStory src="XML/BackingStory.xml"/>\n')
         for sid, _ in self.stories:
             parts.append('<idPkg:Story src="Stories/Story_{sid}.xml"/>\n'.format(sid=sid))
+        for n, (hts_id, url) in enumerate(self.hyperlinks, 1):
+            u = quoteattr(url)
+            parts.append(
+                '<HyperlinkURLDestination Self="HyperlinkURLDestination/qxhld{n}" '
+                "Name={u} DestinationURL={u} DestinationUniqueKey=\"{n}\"/>\n"
+                '<Hyperlink Self="qxhl{n}" Name={u} Source="{src}" Visible="false" '
+                'Highlight="None" Width="Thin" BorderStyle="Solid" Hidden="false" '
+                'DestinationUniqueKey="{n}">'
+                "<Properties>"
+                '<BorderColor type="enumeration">Black</BorderColor>'
+                '<Destination type="object">HyperlinkURLDestination/qxhld{n}</Destination>'
+                "</Properties></Hyperlink>\n".format(n=n, u=u, src=hts_id)
+            )
         parts.append("</Document>\n")
         return "".join(parts)
 
