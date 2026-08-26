@@ -130,6 +130,20 @@ def _run_from_format(char_format, default_font, default_size_pt, default_color):
             run["position"] = "Subscript"
     except Exception:
         pass
+    try:
+        if char_format.isAnchor():
+            href = char_format.anchorHref()
+            if href:
+                run["href"] = href
+    except Exception:
+        pass
+    try:
+        bg = char_format.background()
+        if bg.style() != Qt.BrushStyle.NoBrush and bg.color().alpha() > 0:
+            # InDesign has no character highlight; flagged for a warning
+            run["highlight_dropped"] = True
+    except Exception:
+        pass
     return run
 
 
@@ -148,6 +162,18 @@ def _para_from_block(block, default_font, default_size_pt, default_color):
         # 1 == QTextBlockFormat.ProportionalHeight
         if enum_int(bf.lineHeightType()) == 1 and bf.lineHeight() > 0:
             para["line_height_pct"] = bf.lineHeight()
+    except Exception:
+        pass
+    try:
+        # custom tab stops (QTextOption.TabType: Left 0, Right 1,
+        # Center 2, Delimiter 3)
+        tabs = []
+        for tab in bf.tabPositions():
+            align = {0: "LeftAlign", 1: "RightAlign", 2: "CenterAlign",
+                     3: "CharacterAlign"}.get(enum_int(tab.type), "LeftAlign")
+            tabs.append((tab.position * PX2PT, align))
+        if tabs:
+            para["tabs"] = tabs
     except Exception:
         pass
     it = block.begin()
