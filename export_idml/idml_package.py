@@ -60,6 +60,12 @@ class ColorRegistry:
     def __init__(self):
         self._colors = {}  # (r,g,b) -> self id
         self._stroke_styles = {}  # dash tuple (pt) -> self id
+        self._builtin_stroke_styles = set()  # InDesign "$ID/..." names in use
+
+    def use_builtin_stroke_style(self, name):
+        """Declare one of InDesign's predefined stroke styles (e.g. "Canned
+        Dotted") so Graphic.xml lists it like InDesign's own packages do."""
+        self._builtin_stroke_styles.add(name)
 
     def ref(self, qcolor):
         """Return an IDML color reference for a QColor (or 'Swatch/None')."""
@@ -117,6 +123,10 @@ class ColorRegistry:
         parts.append(
             '<StrokeStyle Self="StrokeStyle/$ID/Solid" Name="$ID/Solid"/>'
         )
+        for name in sorted(self._builtin_stroke_styles):
+            parts.append(
+                '<StrokeStyle Self="StrokeStyle/$ID/{n}" Name="$ID/{n}"/>'.format(n=name)
+            )
         for dash, self_id in sorted(self._stroke_styles.items()):
             items = "".join(
                 '<ListItem type="unit">{}</ListItem>'.format(fmt(v)) for v in dash
@@ -223,7 +233,7 @@ def styles_xml():
     return _wrap("Styles", inner)
 
 
-def preferences_xml(page_w_pt, page_h_pt, pages_per_document=1):
+def preferences_xml(page_w_pt, page_h_pt, pages_per_document=1, facing_pages=True):
     # PagesPerDocument is NOT "how many pages this package has". InDesign
     # first builds a new document with that many pages in its default
     # facing/two-per-spread arrangement and only then replaces the first
@@ -232,9 +242,18 @@ def preferences_xml(page_w_pt, page_h_pt, pages_per_document=1):
     # (verified in InDesign 2026: 45 spreads -> 89 pages, page 1 blank;
     # PagesPerDocument="1" -> 45 pages). The spread list in designmap.xml
     # is the page count; always write 1 here.
+    #
+    # Finding structure-1: page_w_pt/page_h_pt here must be the TRUE
+    # single-page size (e.g. 595.28x841.89pt for this A4 template), not
+    # the QGIS layout's fused two-A4-halves sheet (1190.55pt wide) - the
+    # caller (IdmlPackage.write()) already divides it by pages_per_spread
+    # package. FacingPages must be "true" to match the InDesign-authored
+    # reference template's own Preferences.xml; "false" here (combined
+    # with a double-width single Page) was the root cause of the
+    # ceil(N/2)-1 blank-spread prepend described above.
     inner = (
         '<DocumentPreference PageHeight="{h}" PageWidth="{w}" '
-        'PagesPerDocument="1" FacingPages="false" '
+        'PagesPerDocument="1" FacingPages="{facing}" '
         'DocumentBleedTopOffset="0" DocumentBleedBottomOffset="0" '
         'DocumentBleedInsideOrLeftOffset="0" '
         'DocumentBleedOutsideOrRightOffset="0" '
@@ -248,7 +267,10 @@ def preferences_xml(page_w_pt, page_h_pt, pages_per_document=1):
         '<MarginPreference ColumnCount="1" ColumnGutter="12" Top="0" '
         'Bottom="0" Left="0" Right="0" ColumnDirection="Horizontal" '
         'ColumnsPositions="0 {w}"/>\n'
-    ).format(w=fmt(page_w_pt), h=fmt(page_h_pt), n=pages_per_document)
+    ).format(
+        w=fmt(page_w_pt), h=fmt(page_h_pt), n=pages_per_document,
+        facing="true" if facing_pages else "false",
+    )
     return _wrap("Preferences", inner)
 
 
@@ -274,27 +296,51 @@ def backing_story_xml():
     return _wrap("BackingStory", inner)
 
 
-def master_spread_xml(master_id, page_w_pt, page_h_pt):
-    inner = (
-        '<MasterSpread Self="{mid}" ItemTransform="1 0 0 1 0 0" Name="A-Master" '
-        'NamePrefix="A" BaseName="Master" ShowMasterItems="true" PageCount="1" '
-        'OverriddenPageItemProps="">\n'
-        '<Page Self="{mid}p" GeometricBounds="0 0 {h} {w}" '
-        'ItemTransform="1 0 0 1 {tx} {ty}" Name="A" '
-        'AppliedMaster="n" OverrideList="" TabOrder="" '
-        'GridStartingPoint="TopOutside" UseMasterGrid="true">\n'
-        "<Properties><PageColor type=\"enumeration\">UseMasterColor</PageColor></Properties>\n"
+def page_elements_xml(page_id_base, master_ref, sheet_w_pt, sheet_h_pt,
+                      pages_per_spread=1, first_name=1, sep="\n", names=None):
+    """<Page> elements for one spread/master.
+
+    A QGIS layout page is one *sheet* in spread coordinates (origin at the
+    sheet centre). With pages_per_spread=N the sheet is declared as N
+    equal-width InDesign pages side by side - exactly how InDesign itself
+    represents a facing spread (reference Spread_u76a.xml: PageCount="2",
+    two Pages of half width at ItemTransform x = -W/2 and 0). Item
+    coordinates are spread-relative and do not change with N."""
+    n = max(1, int(pages_per_spread))
+    pw = sheet_w_pt / float(n)
+    ty = -sheet_h_pt / 2.0
+    tmpl = (
+        '<Page Self="{pid}" GeometricBounds="0 0 {h} {w}" '
+        'ItemTransform="1 0 0 1 {tx} {ty}" Name="{name}" '
+        'AppliedMaster="{mid}" OverrideList="" TabOrder="" '
+        'GridStartingPoint="TopOutside" UseMasterGrid="true">'
+        "<Properties><PageColor type=\"enumeration\">UseMasterColor</PageColor></Properties>"
         '<MarginPreference ColumnCount="1" ColumnGutter="12" Top="0" Bottom="0" '
         'Left="0" Right="0" ColumnDirection="Horizontal" '
-        'ColumnsPositions="0 {w}"/>\n'
-        "</Page>\n"
-        "</MasterSpread>\n"
-    ).format(
-        mid=master_id,
-        w=fmt(page_w_pt),
-        h=fmt(page_h_pt),
-        tx=fmt(-page_w_pt / 2.0),
-        ty=fmt(-page_h_pt / 2.0),
+        'ColumnsPositions="0 {w}"/>'
+        "</Page>"
+    )
+    parts = []
+    for i in range(n):
+        parts.append(tmpl.format(
+            pid=page_id_base if n == 1 else "{}p{}".format(page_id_base, i + 1),
+            mid=master_ref,
+            name=names[i] if names else str(first_name + i),
+            w=fmt(pw), h=fmt(sheet_h_pt),
+            tx=fmt(-sheet_w_pt / 2.0 + i * pw), ty=fmt(ty),
+        ))
+    return sep.join(parts)
+
+
+def master_spread_xml(master_id, page_w_pt, page_h_pt, pages_per_spread=1):
+    n = max(1, int(pages_per_spread))
+    inner = (
+        '<MasterSpread Self="{mid}" ItemTransform="1 0 0 1 0 0" Name="A-Master" '
+        'NamePrefix="A" BaseName="Master" ShowMasterItems="true" PageCount="{n}" '
+        'OverriddenPageItemProps="">\n'.format(mid=master_id, n=n)
+        + page_elements_xml(master_id + "p", "n", page_w_pt, page_h_pt, n,
+                            names=["A"] * n)
+        + "\n</MasterSpread>\n"
     )
     return _wrap("MasterSpread", inner)
 
@@ -302,12 +348,14 @@ def master_spread_xml(master_id, page_w_pt, page_h_pt):
 class Spread:
     """One IDML spread holding one page (one QGIS layout page)."""
 
-    def __init__(self, spread_id, page_id, master_id, page_w_pt, page_h_pt):
+    def __init__(self, spread_id, page_id, master_id, page_w_pt, page_h_pt,
+                 pages_per_spread=1):
         self.spread_id = spread_id
         self.page_id = page_id
         self.master_id = master_id
-        self.w = page_w_pt
-        self.h = page_h_pt
+        self.w = page_w_pt   # the whole QGIS page (= sheet), items live in
+        self.h = page_h_pt   # this spread space regardless of the page split
+        self.pages_per_spread = max(1, int(pages_per_spread))
         self.items = []  # raw XML strings, in paint order (later = on top)
         self._group_stack = []  # open <Group> buffers
 
@@ -340,28 +388,19 @@ class Spread:
         self.add(xml)
 
     def xml(self):
+        # One <Page> per InDesign page; N>1 = a facing spread (verified in
+        # InDesign 2026: 3 sheets x 2 -> 3 spreads / 6 pages, every item on
+        # the right page; N=1 unchanged). PageCount must match the number
+        # of Page children.
+        n = self.pages_per_spread
         parts = [
             '<Spread Self="{sid}" FlattenerOverride="Default" '
             'AllowPageShuffle="true" ItemTransform="1 0 0 1 0 0" '
-            'ShowMasterItems="true" PageCount="1" BindingLocation="0" '
+            'ShowMasterItems="true" PageCount="{pc}" BindingLocation="0" '
             'PageTransitionType="None" PageTransitionDirection="NotApplicable" '
-            'PageTransitionDuration="Medium">'.format(sid=self.spread_id),
-            '<Page Self="{pid}" GeometricBounds="0 0 {h} {w}" '
-            'ItemTransform="1 0 0 1 {tx} {ty}" Name="1" '
-            'AppliedMaster="{mid}" OverrideList="" TabOrder="" '
-            'GridStartingPoint="TopOutside" UseMasterGrid="true">'
-            "<Properties><PageColor type=\"enumeration\">UseMasterColor</PageColor></Properties>"
-            '<MarginPreference ColumnCount="1" ColumnGutter="12" Top="0" '
-            'Bottom="0" Left="0" Right="0" ColumnDirection="Horizontal" '
-            'ColumnsPositions="0 {w}"/>'
-            "</Page>".format(
-                pid=self.page_id,
-                mid=self.master_id,
-                w=fmt(self.w),
-                h=fmt(self.h),
-                tx=fmt(-self.w / 2.0),
-                ty=fmt(-self.h / 2.0),
-            ),
+            'PageTransitionDuration="Medium">'.format(sid=self.spread_id, pc=n),
+            page_elements_xml(self.page_id, self.master_id, self.w, self.h, n,
+                              first_name=1, sep=""),
         ]
         parts.extend(self.items)
         parts.append("</Spread>")
@@ -521,12 +560,15 @@ def story_xml(story_id, paragraphs, color_registry, font_registry,
 class IdmlPackage:
     """Accumulates parts, then writes the .idml zip."""
 
-    def __init__(self, page_w_pt, page_h_pt, font_index=None):
+    def __init__(self, page_w_pt, page_h_pt, font_index=None, pages_per_spread=1):
         self.idgen = IdGen()
         self.colors = ColorRegistry()
         self.fonts = FontRegistry(font_index)
-        self.page_w = page_w_pt
+        self.page_w = page_w_pt   # QGIS page = one sheet = one spread
         self.page_h = page_h_pt
+        # N InDesign pages per sheet (2: an A3-landscape QGIS page becomes
+        # a left+right A4 facing spread; the layout was designed that way).
+        self.pages_per_spread = max(1, int(pages_per_spread))
         self.master_id = "qxMasterA"
         self.spreads = []  # Spread objects
         self.stories = []  # (story_id, xml)
@@ -539,6 +581,7 @@ class IdmlPackage:
             self.master_id,
             page_w_pt if page_w_pt else self.page_w,
             page_h_pt if page_h_pt else self.page_h,
+            pages_per_spread=self.pages_per_spread,
         )
         self.spreads.append(sp)
         return sp
@@ -619,15 +662,24 @@ class IdmlPackage:
             z.writestr("Resources/Graphic.xml", self.colors.graphic_xml())
             z.writestr("Resources/Fonts.xml", self.fonts.fonts_xml(self.idgen))
             z.writestr("Resources/Styles.xml", styles_xml())
+            # DocumentPreference carries the single InDesign page size
+            # (sheet width / pages_per_spread) and FacingPages for N>1.
+            n = self.pages_per_spread
             z.writestr(
                 "Resources/Preferences.xml",
-                preferences_xml(self.page_w, self.page_h, max(1, len(self.spreads))),
+                preferences_xml(
+                    self.page_w / float(n), self.page_h, 1,
+                    facing_pages=(n > 1),
+                ),
             )
             z.writestr("XML/Tags.xml", tags_xml())
             z.writestr("XML/BackingStory.xml", backing_story_xml())
             z.writestr(
                 "MasterSpreads/MasterSpread_{}.xml".format(self.master_id),
-                master_spread_xml(self.master_id, self.page_w, self.page_h),
+                master_spread_xml(
+                    self.master_id, self.page_w, self.page_h,
+                    pages_per_spread=self.pages_per_spread,
+                ),
             )
             for sp in self.spreads:
                 z.writestr("Spreads/Spread_{}.xml".format(sp.spread_id), sp.xml())

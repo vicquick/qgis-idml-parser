@@ -182,6 +182,18 @@ def _export_pages(layout, pkg, ctx, warnings):
                 )
 
 
+PAGES_PER_SPREAD_PROPERTY = "export_idml/pages_per_spread"
+
+
+def layout_pages_per_spread(layout):
+    """Pages-per-spread stored on the layout (travels with the project)."""
+    try:
+        v = layout.customProperty(PAGES_PER_SPREAD_PROPERTY, 1)
+        return max(1, int(v))
+    except Exception:
+        return 1
+
+
 def export_layout_to_idml(
     layout,
     out_path,
@@ -189,13 +201,21 @@ def export_layout_to_idml(
     copy_fonts=True,
     atlas=False,
     feedback=None,
+    pages_per_spread=None,
 ):
     """Export `layout` to `out_path` (.idml).
 
     atlas=True: iterate the layout's atlas; one spread (per layout page)
     per feature, all in ONE package.
+    pages_per_spread: split every QGIS layout page into N equal-width
+    InDesign pages on one facing spread (2 = an A3-landscape layout page
+    becomes a left+right A4 spread). None reads the layout's custom
+    property "export_idml/pages_per_spread" and falls back to 1.
     Returns dict with summary info.
     """
+    if pages_per_spread is None:
+        pages_per_spread = layout_pages_per_spread(layout)
+    pages_per_spread = max(1, int(pages_per_spread))
     out_path = os.path.abspath(out_path)
     if not out_path.lower().endswith(".idml"):
         out_path += ".idml"
@@ -209,7 +229,8 @@ def export_layout_to_idml(
     page_w_pt = mm(page.pageSize().width())
     page_h_pt = mm(page.pageSize().height())
 
-    pkg = IdmlPackage(page_w_pt, page_h_pt, font_index=FontIndex())
+    pkg = IdmlPackage(page_w_pt, page_h_pt, font_index=FontIndex(),
+                      pages_per_spread=pages_per_spread)
     warnings = []
     ctx = ExportContext(links_dir, dpi=dpi, copy_fonts=copy_fonts, warnings=warnings)
 

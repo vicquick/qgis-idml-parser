@@ -22,7 +22,11 @@ from qgis.PyQt.QtWidgets import (
 
 from qgis.core import QgsProject
 
-from .exporter import export_layout_to_idml
+from .exporter import (
+    PAGES_PER_SPREAD_PROPERTY,
+    export_layout_to_idml,
+    layout_pages_per_spread,
+)
 
 
 class ExportDialog(QDialog):
@@ -63,6 +67,24 @@ class ExportDialog(QDialog):
         h2.addStretch()
         v.addLayout(h2)
 
+        # One QGIS layout page -> N InDesign pages on one facing spread
+        # (2: an A3-landscape page becomes a left+right A4 spread). Stored
+        # on the layout as a custom property so it travels with the project.
+        h3 = QHBoxLayout()
+        h3.addWidget(QLabel("InDesign pages per layout page:"))
+        self.pages_spin = QSpinBox()
+        self.pages_spin.setRange(1, 4)
+        self.pages_spin.setToolTip(
+            "Split every layout page into this many equal-width pages on one "
+            "facing spread. Remembered per layout (custom property "
+            "export_idml/pages_per_spread)."
+        )
+        h3.addWidget(self.pages_spin)
+        h3.addStretch()
+        v.addLayout(h3)
+        self.layout_combo.currentIndexChanged.connect(self._layout_changed)
+        self._layout_changed(self.layout_combo.currentIndex())
+
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -81,6 +103,15 @@ class ExportDialog(QDialog):
     def selected_layout(self):
         i = self.layout_combo.currentIndex()
         return self._layouts[i] if 0 <= i < len(self._layouts) else None
+
+    def _layout_changed(self, _index):
+        lyt = self.selected_layout()
+        if lyt is not None:
+            self.pages_spin.setValue(layout_pages_per_spread(lyt))
+            if not self.path_edit.text().strip():
+                self.path_edit.setText(os.path.join(
+                    os.path.dirname(QgsProject.instance().fileName() or os.path.expanduser("~")),
+                    lyt.name() + ".idml"))
 
 
 class ExportIdmlPlugin:
@@ -115,6 +146,9 @@ class ExportIdmlPlugin:
                 self.iface.mainWindow(), "Export IDML", "Pick a layout and output file."
             )
             return
+        pages = dlg.pages_spin.value()
+        # remember per layout - travels with the project (user must save)
+        layout.setCustomProperty(PAGES_PER_SPREAD_PROPERTY, pages)
         try:
             result = export_layout_to_idml(
                 layout,
@@ -122,6 +156,7 @@ class ExportIdmlPlugin:
                 dpi=dlg.dpi_spin.value(),
                 copy_fonts=dlg.fonts_check.isChecked(),
                 atlas=dlg.atlas_check.isChecked(),
+                pages_per_spread=pages,
             )
         except Exception:
             QMessageBox.critical(

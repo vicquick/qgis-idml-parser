@@ -77,6 +77,27 @@ result = export_layout_to_idml(layout, r"C:\out\report.idml",
 print(result["spreads"], result["warnings"])
 ```
 
+**Pages per spread.** A QGIS layout page is one sheet; pass
+`pages_per_spread=2` (or set it in the plugin dialog) to declare that
+sheet as two equal-width InDesign pages on a facing spread — an
+A3-landscape layout designed as "two A4 portrait pages side by side"
+then opens in InDesign as a proper left/right A4 spread, which is how
+InDesign represents a spread itself. The value is remembered per layout
+in the custom property `export_idml/pages_per_spread` (save the
+project). Item coordinates are unaffected; only the `<Page>` elements,
+the master and `DocumentPreference` change.
+
+**Verifying against InDesign (Windows, InDesign installed).**
+`tools/indesign_render.py --idml X.idml --out dir --pages 1-2` opens a
+temporary copy through COM, exports those pages to PDF and dumps what
+InDesign resolved (`preflight.json`: fonts, links, overset;
+`items_p<N>.json`: every page item's fill/stroke/type/bounds).
+`tools/compare_pdf.py --ref qgis.pdf --test dir/indesign.pdf --page 1
+--join 2 --out cmp` renders both, writes a 50/50 blend, a difference
+heat map and per-tile scores. `tools/indesign_probe.py` only reports the
+page/spread structure. All three never touch a document the user has
+open.
+
 One bad item never aborts an export — it is skipped and reported in
 `result["warnings"]`.
 

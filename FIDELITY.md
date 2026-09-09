@@ -51,6 +51,16 @@ scalebar / table PDFs is Qt-rendered and matches QGIS by construction.
 | 34 | documented* | low | `mapping.py` | FirstBaselineOffset is hardcoded to 'AscentOffset' for every text frame, independent of font or vAlign |
 | 35 | **FIXED 0.6.0** | low | `mapping.py` | export_polyline never emits any transparency — a semi-transparent line stroke always renders fully opaque |
 | 36 | documented* | low | `mapping.py` | Export dpi silently controls hairline stroke width in map/fallback PDFs |
+| 37 | **FIXED 0.7.0** | high | `mapping.py` | Line symbol layers inside fill symbols ("Outline: Simple line") exported as opaque black fills with 0 pt stroke — base-class fillColor()/strokeColor() return an invalid QColor on line layers |
+| 38 | **FIXED 0.7.0** | high | `mapping.py` | Symbol layer stacking order inverted (QGIS index 0 is the bottom layer) — fill painted over the outline, hiding its inner half |
+| 39 | **FIXED 0.7.0** | high | `idml_package.py` | `PagesPerDocument=N` makes InDesign prepend ceil(N/2)-1 empty facing spreads (45 spreads → 89 pages, page 1 blank); must be 1 |
+| 40 | **FIXED 0.7.0** | high | `mapping.py` | Round-capped dot patterns (dash ≈ 0) rendered invisible — DashedStrokeStyle dashes do not inherit the item EndCap; mapped to `$ID/Canned Dotted` |
+| 41 | **FIXED 0.7.0** | high | `mapping.py` | HTML `<table>` used as a bullet list (bullet cell + text cell) exported as a 50/50 two-column table — now a hanging-indent paragraph list |
+| 42 | **FIXED 0.7.0** | medium | `mapping.py` | Placed map/fallback PDF `GraphicBounds` used the nominal size while Qt rounds the PDF page box to whole points — now the real box plus compensating scale |
+
+Findings 37–42 come from the first real InDesign round trip (2026-09-09,
+InDesign 2026 via COM, `tools/`): the earlier audits reasoned from the
+IDML spec and the QGIS API alone.
 
 ## Details
 

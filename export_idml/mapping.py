@@ -221,26 +221,51 @@ def _pdf_writer(path, w_pt, h_pt, dpi):
     except AttributeError:  # Qt5 enum spelling
         writer.setPageSize(QPageSize(QSizeF(w_pt, h_pt), QPageSize.Point))
     writer.setPageMargins(QMarginsF(0, 0, 0, 0))
-    return writer
+    # finding map-pdf-page-size-rounding: QPagedPaintDevice/QPdfWriter
+    # rounds the physical PDF page box to whole points, so the file
+    # actually written to `path` is NOT exactly (w_pt, h_pt) - read back
+    # the real page rect so callers can declare the real asset size
+    # instead of assuming asset size == requested size.
+    try:
+        rect = writer.pageLayout().fullRectPoints()
+        actual_w_pt, actual_h_pt = float(rect.width()), float(rect.height())
+    except Exception:
+        actual_w_pt, actual_h_pt = w_pt, h_pt
+    return writer, actual_w_pt, actual_h_pt
 
 
 def placed_pdf_xml(idgen, colors, item_attrs, w_pt, h_pt, transform, pdf_path,
-                   name='"$ID/"', extra_xml=""):
-    """Rectangle frame + placed PDF + Link (referenced, never embedded)."""
+                   name='"$ID/"', extra_xml="", asset_w_pt=None, asset_h_pt=None):
+    """Rectangle frame + placed PDF + Link (referenced, never embedded).
+
+    Finding map-pdf-page-size-rounding: asset_w_pt/asset_h_pt is the REAL
+    page size of the PDF file on disk when it differs from the frame's
+    nominal w_pt/h_pt (true for every map/fallback snippet rendered via
+    _pdf_writer, which QPdfWriter rounds to whole points). GraphicBounds
+    always describes the real asset - never the nominal frame size - and
+    the inner <PDF> gets a compensating non-uniform scale instead of
+    identity, mirroring how genuine InDesign-authored IDML places PDFs
+    (GraphicBounds = native asset page box + a fitting ItemTransform)."""
+    if asset_w_pt is None:
+        asset_w_pt = w_pt
+    if asset_h_pt is None:
+        asset_h_pt = h_pt
     rect_id = idgen.next("fr")
     pdf_id = idgen.next("pdf")
     link_id = idgen.next("lnk")
+    psx = w_pt / asset_w_pt if asset_w_pt else 1.0
+    psy = h_pt / asset_h_pt if asset_h_pt else 1.0
     return (
         '<Rectangle Self="{rid}" ContentType="GraphicType" ItemLayer="qxLayer1" '
         'AppliedObjectStyle="ObjectStyle/$ID/[Normal Graphics Frame]" '
         'Visible="true" Name={name} {attrs} ItemTransform="{tf}">'
         "<Properties>{path}</Properties>"
         "{extra}"
-        '<PDF Self="{pid}" ItemTransform="1 0 0 1 0 0" Visible="true" Name="$ID/" '
+        '<PDF Self="{pid}" ItemTransform="{psx} 0 0 {psy} 0 0" Visible="true" Name="$ID/" '
         'GrayVectorPolicy="IgnoreAll" RGBVectorPolicy="IgnoreAll" '
         'CMYKVectorPolicy="IgnoreAll" AppliedObjectStyle="ObjectStyle/$ID/[None]">'
         "<Properties>"
-        '<GraphicBounds Left="0" Top="0" Right="{w}" Bottom="{h}"/>'
+        '<GraphicBounds Left="0" Top="0" Right="{aw}" Bottom="{ah}"/>'
         "</Properties>"
         '<PDFAttribute PageNumber="1" PDFCrop="CropMedia" TransparentBackground="true"/>'
         '<Link Self="{lid}" AssetURL="$ID/" AssetID="$ID/" '
@@ -259,8 +284,10 @@ def placed_pdf_xml(idgen, colors, item_attrs, w_pt, h_pt, transform, pdf_path,
             extra=extra_xml,
             tf=transform,
             path=rect_path(w_pt, h_pt),
-            w=fmt(w_pt),
-            h=fmt(h_pt),
+            psx=fmt(psx),
+            psy=fmt(psy),
+            aw=fmt(asset_w_pt),
+            ah=fmt(asset_h_pt),
             uri=file_uri(pdf_path),
         )
     )
@@ -296,6 +323,50 @@ def _natural_width_pt(paragraphs):
                 line_w += fm.horizontalAdvance(seg)
         widest = max(widest, line_w)
     return widest * 72.0 / 96.0
+
+
+def _table_is_bullet_list(table):
+    """Finding html-table-bullet-list-split: detect the per-row
+    '<td>bullet</td><td>text</td>' hanging-indent trick (a common layout-script
+    template) so it is not misread as a genuine side-by-side
+    column split. True when the table has exactly 2 columns, both with
+    the same row count, and column 0 is one short, identical,
+    non-alphanumeric marker per row (e.g. '•\xa0\xa0')."""
+    cols = table["columns"]
+    if len(cols) != 2:
+        return False
+    col0, col1 = cols
+    if not col0 or len(col0) != len(col1):
+        return False
+    markers = set()
+    for para in col0:
+        text = "".join(r["text"] for r in para["runs"]).strip()
+        if not text or len(text) > 3 or any(c.isalnum() for c in text):
+            return False
+        markers.add(text)
+    return len(markers) == 1
+
+
+def _bullet_table_paragraphs(table):
+    """Finding html-table-bullet-list-split: merge a bullet-marker
+    table's two columns into one paragraph per row (marker text as a
+    leading run + hanging indent) instead of the exporter's default
+    50/50 column split, reusing the same hanging-indent idea as the
+    genuine <ul> synthesis in text_runs.py's _para_from_block()."""
+    col0, col1 = table["columns"]
+    out = []
+    for marker_para, body_para in zip(col0, col1):
+        marker_runs = [dict(r) for r in marker_para["runs"]]
+        body_runs = [dict(r) for r in body_para["runs"]]
+        if not marker_runs or not body_runs:
+            continue
+        marker_w = _natural_width_pt([{"runs": marker_runs}])
+        para = dict(body_para)
+        para["runs"] = marker_runs + body_runs
+        para["left_indent_pt"] = marker_w
+        para["first_line_indent_pt"] = -marker_w
+        out.append(para)
+    return out
 
 
 def _export_table_label(item, pkg, spread, table, w_pt, h_pt, transform):
@@ -424,18 +495,26 @@ def export_label(item, pkg, spread, ctx):
         tables = [e for e in structure if e["type"] == "table"]
         loose_paras = [e for e in structure if e["type"] == "para" and e["runs"]]
         if len(tables) == 1 and not loose_paras and not item.itemRotation():
-            # HTML column table (bullet list pattern) -> one TextFrame
-            # per column, side by side, exactly the QGIS split
-            return _export_table_label(
-                item, pkg, spread, tables[0], w_pt, h_pt, transform
-            )
-        paragraphs = []
-        for e in structure:
-            if e["type"] == "table":
-                for col in e["columns"]:
-                    paragraphs.extend(col)
+            table = tables[0]
+            if _table_is_bullet_list(table):
+                # finding html-table-bullet-list-split: a fake 2-column
+                # bullet/text table (two list columns), not a real
+                # column split - one hanging-indent paragraph per row.
+                paragraphs = _bullet_table_paragraphs(table)
             else:
-                paragraphs.append(e)
+                # genuine HTML column table -> one TextFrame per column,
+                # side by side, exactly the QGIS split
+                return _export_table_label(
+                    item, pkg, spread, table, w_pt, h_pt, transform
+                )
+        else:
+            paragraphs = []
+            for e in structure:
+                if e["type"] == "table":
+                    for col in e["columns"]:
+                        paragraphs.extend(col)
+                else:
+                    paragraphs.append(e)
     else:
         # named style (e.g. "Thin") often isn't reflected in QFont.styleName()
         if not font.styleName():
@@ -817,7 +896,23 @@ def _stroke_extra_attrs(sl, stroke_w_pt, colors):
             w = max(stroke_w_pt, 0.75)
             dash_pt = [max(0.1, m * w) for m in _PEN_DASH[pen_style]]
         if dash_pt:
-            attrs += ' StrokeType="{}"'.format(colors.stroke_style(dash_pt))
+            # A round-capped "dot" pattern in QGIS is a near-zero dash plus a
+            # gap. InDesign accepts such a DashedStrokeStyle but paints the
+            # 0-length dashes as nothing - the item-level EndCap does not
+            # extend dash segments (verified in InDesign 2026: the box was
+            # simply invisible). Its built-in "Canned Dotted" style IS the
+            # round-dot pattern (dot every ~3.1 x weight), so map to that.
+            cap_round = False
+            try:
+                cap_round = _PEN_CAPS.get(enum_int(sl.penCapStyle())) == "RoundEndCap"
+            except Exception:
+                pass
+            w_ref = max(stroke_w_pt, 0.75)
+            if cap_round and dash_pt[0] <= 0.25 * w_ref:
+                attrs += ' StrokeType="StrokeStyle/$ID/Canned Dotted"'
+                colors.use_builtin_stroke_style("Canned Dotted")
+            else:
+                attrs += ' StrokeType="{}"'.format(colors.stroke_style(dash_pt))
     except Exception:
         pass
     try:
@@ -842,8 +937,16 @@ def _stroke_extra_attrs(sl, stroke_w_pt, colors):
 def _symbol_layer_styles(symbol, colors, item=None):
     """All symbol layers, bottom-to-top, as IDML style dicts.
 
-    QGIS lists layer 0 on TOP and renders the list bottom-up, so the
-    emission order here is reversed(range(count)).
+    Findings shape-layer-zorder-inverted / symbol-layer-paint-order-reversed:
+    QGIS paints symbolLayer(0) FIRST/bottom and higher indices LATER/on top
+    (verified against the reference PDF: an appended outline layer is fully
+    opaque over the fill beneath it). The old comment here claimed the
+    opposite ("layer 0 is on TOP") and drove a reversed(range(count)) loop,
+    which made export_shape/export_polygon emit the topmost QGIS layer
+    FIRST into the IDML spread - since IDML stacking is document order
+    (later = front), that put the opaque fill in front of the outline,
+    hiding its inner half. Iterate ascending so layers[-1] really is the
+    layer QGIS paints last/on top.
     Returns (layers, symbol_opacity); layers may be empty."""
     layers = []
     opacity = 1.0
@@ -863,7 +966,7 @@ def _symbol_layer_styles(symbol, colors, item=None):
         from qgis.core import QgsLineSymbolLayer
     except Exception:  # pragma: no cover
         QgsLineSymbolLayer = ()
-    for li in reversed(range(symbol.symbolLayerCount())):
+    for li in range(symbol.symbolLayerCount()):
         sl = symbol.symbolLayer(li)
         fill = "Swatch/None"
         stroke = "Swatch/None"
@@ -1263,7 +1366,9 @@ def export_map(item, pkg, spread, ctx):
     else:
         ms.setBackgroundColor(QColor(0, 0, 0, 0))
 
-    writer = _pdf_writer(pdf_path, w_pt, h_pt, dpi)
+    # finding map-pdf-page-size-rounding: writer's real page rect can
+    # differ from the requested (w_pt, h_pt) by rounding to whole points
+    writer, asset_w_pt, asset_h_pt = _pdf_writer(pdf_path, w_pt, h_pt, dpi)
     painter = QPainter(writer)
     if not painter.isActive():
         raise RuntimeError("cannot open PDF writer for map: " + pdf_path)
@@ -1286,6 +1391,8 @@ def export_map(item, pkg, spread, ctx):
             pdf_path,
             name=_item_name(item),
             extra_xml=frame_transparency,
+            asset_w_pt=asset_w_pt,
+            asset_h_pt=asset_h_pt,
         )
     )
 
@@ -1337,7 +1444,9 @@ def export_fallback(item, pkg, spread, ctx):
     for it in others:
         it.setVisibility(False)
     try:
-        writer = _pdf_writer(pdf_path, bw_pt, bh_pt, ctx.dpi)
+        # finding map-pdf-page-size-rounding: real page rect can differ
+        # from the requested (bw_pt, bh_pt) by rounding to whole points
+        writer, asset_bw_pt, asset_bh_pt = _pdf_writer(pdf_path, bw_pt, bh_pt, ctx.dpi)
         painter = QPainter(writer)
         if not painter.isActive():
             raise RuntimeError("cannot open PDF writer: " + pdf_path)
@@ -1375,6 +1484,8 @@ def export_fallback(item, pkg, spread, ctx):
             extra_xml=_transparency_xml(
                 _fb_op, blend_mode=_fb_blend
             ),
+            asset_w_pt=asset_bw_pt,
+            asset_h_pt=asset_bh_pt,
         )
     )
 

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.7.0 — 2026-09-09
+
+First release verified by an actual InDesign round trip (QGIS PDF vs
+InDesign-rendered IDML, per-tile pixel diff; see tools/). production
+atlas, 45 features: 4.3/255 mean difference, remaining
+diff is anti-aliasing / JPEG resampling.
+
+Fixes:
+- Line symbol layers inside fill symbols ("Outline: Simple line")
+  were exported as opaque black fills with a 0 pt stroke — every
+  QgsSymbolLayer inherits fillColor()/strokeColor() from the base
+  class, on a line layer they return an invalid (black) QColor
+- Symbol layer stacking order was inverted (`reversed(range(n))`):
+  QGIS index 0 is the BOTTOM layer; the fill was painted over the
+  outline, eating its inner half
+- `PagesPerDocument` must be 1: InDesign builds a document with that
+  many pages in its default two-per-spread layout before reading the
+  package spreads, leaving ceil(N/2)-1 empty facing spreads in front
+  (45 spreads → 89 pages, page 1 blank)
+- Round-capped dot patterns (near-zero dash + gap) map to InDesign's
+  built-in `$ID/Canned Dotted`; a DashedStrokeStyle with 0-length
+  dashes renders invisible (item EndCap does not extend dash segments)
+- HTML `<table>` labels that are really a bullet list (bullet cell +
+  text cell per row) become a hanging-indent paragraph list instead of
+  a two-column InDesign table with a 50/50 split
+- Placed map/fallback PDFs: GraphicBounds now carry the real page box
+  Qt rounded to (whole points) plus a compensating scale, instead of
+  the nominal size
+
+New:
+- `pages_per_spread` (API + plugin dialog, remembered per layout in
+  custom property `export_idml/pages_per_spread`): one QGIS layout
+  page becomes N equal-width InDesign pages on a facing spread — an
+  A3-landscape layout page exports as a left+right A4 spread, exactly
+  how InDesign represents a spread itself
+- tools/indesign_render.py (COM: open a temp copy, export PDF, dump
+  preflight + resolved page items), tools/indesign_probe.py,
+  tools/compare_pdf.py (blend, heat map, per-tile scores, `--join`),
+  tools/idml_patch.py (regex A/B patches on a package)
+
+
 ## 0.6.0 — 2026-08-26
 
 Closes every remaining fidelity-audit finding (FIDELITY.md: 33 fixed,
