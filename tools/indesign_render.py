@@ -95,6 +95,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--pages", default="1")
     ap.add_argument("--preset", default="[High Quality Print]")
+    ap.add_argument("--spreads", action="store_true",
+                    help="export reader spreads (one PDF page per InDesign spread)")
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -152,6 +154,7 @@ def main():
         # PDF
         app.PDFExportPreferences.PageRange = a.pages
         app.PDFExportPreferences.ViewPDF = False
+        app.PDFExportPreferences.ExportReaderSpreads = bool(a.spreads)
         preset = app.PDFExportPresets.Item(a.preset)
         pdf = os.path.join(os.path.abspath(a.out), "indesign.pdf")
         if os.path.exists(pdf):

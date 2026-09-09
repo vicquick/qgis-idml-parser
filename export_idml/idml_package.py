@@ -223,10 +223,18 @@ def styles_xml():
     return _wrap("Styles", inner)
 
 
-def preferences_xml(page_w_pt, page_h_pt, pages_per_document):
+def preferences_xml(page_w_pt, page_h_pt, pages_per_document=1):
+    # PagesPerDocument is NOT "how many pages this package has". InDesign
+    # first builds a new document with that many pages in its default
+    # facing/two-per-spread arrangement and only then replaces the first
+    # spread with the package's spreads, appending the rest. With N>1 that
+    # leaves ceil(N/2)-1 empty two-page spreads in front of the real ones
+    # (verified in InDesign 2026: 45 spreads -> 89 pages, page 1 blank;
+    # PagesPerDocument="1" -> 45 pages). The spread list in designmap.xml
+    # is the page count; always write 1 here.
     inner = (
         '<DocumentPreference PageHeight="{h}" PageWidth="{w}" '
-        'PagesPerDocument="{n}" FacingPages="false" '
+        'PagesPerDocument="1" FacingPages="false" '
         'DocumentBleedTopOffset="0" DocumentBleedBottomOffset="0" '
         'DocumentBleedInsideOrLeftOffset="0" '
         'DocumentBleedOutsideOrRightOffset="0" '

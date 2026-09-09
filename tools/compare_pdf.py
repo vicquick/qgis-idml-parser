@@ -19,12 +19,29 @@ import numpy as np
 from PIL import Image, ImageChops
 
 
-def render(pdf, page, dpi):
+def render(pdf, page, dpi, join=1):
+    """Render page `page` (1-based). With join=N, pages (page-1)*N+1 .. +N are
+    concatenated left-to-right - InDesign exports facing spreads as single
+    pages, QGIS has the whole spread on one page."""
     d = fitz.open(pdf)
-    p = d[page - 1]
-    pm = p.get_pixmap(dpi=dpi, alpha=False)
-    im = Image.frombytes("RGB", (pm.width, pm.height), pm.samples)
-    return im, (p.rect.width * 25.4 / 72, p.rect.height * 25.4 / 72)
+    ims, w_mm, h_mm = [], 0.0, 0.0
+    first = (page - 1) * join
+    for i in range(first, first + join):
+        p = d[i]
+        pm = p.get_pixmap(dpi=dpi, alpha=False)
+        ims.append(Image.frombytes("RGB", (pm.width, pm.height), pm.samples))
+        w_mm += p.rect.width * 25.4 / 72
+        h_mm = max(h_mm, p.rect.height * 25.4 / 72)
+    if join == 1:
+        return ims[0], (w_mm, h_mm)
+    W = sum(im.width for im in ims)
+    H = max(im.height for im in ims)
+    out = Image.new("RGB", (W, H), "white")
+    x = 0
+    for im in ims:
+        out.paste(im, (x, 0))
+        x += im.width
+    return out, (w_mm, h_mm)
 
 
 def main():
@@ -36,11 +53,13 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--dpi", type=int, default=72)
     ap.add_argument("--tile", type=float, default=20.0)
+    ap.add_argument("--join", type=int, default=1,
+                    help="concatenate N consecutive test pages side by side")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
     ref, ref_mm = render(a.ref, a.page, a.dpi)
-    tst, tst_mm = render(a.test, a.test_page or a.page, a.dpi)
+    tst, tst_mm = render(a.test, a.test_page or a.page, a.dpi, join=a.join)
     if tst.size != ref.size:
         tst = tst.resize(ref.size)
 

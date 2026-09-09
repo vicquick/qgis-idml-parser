@@ -8,6 +8,7 @@ against InDesign without re-running the QGIS export.
         --sub 'Resources/Preferences.xml' 'PagesPerDocument="\d+"' 'PagesPerDocument="1"'
 """
 import argparse
+import fnmatch
 import re
 import zipfile
 
@@ -27,7 +28,7 @@ def main():
                 continue
             data = zin.read(info.filename)
             for member, pat, repl in a.sub:
-                if info.filename == member:
+                if fnmatch.fnmatch(info.filename, member):
                     txt = data.decode("utf-8")
                     txt, n = re.subn(pat, repl, txt)
                     print("%s: %d substitution(s)" % (member, n))
