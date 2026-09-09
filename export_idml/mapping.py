@@ -859,6 +859,10 @@ def _symbol_layer_styles(symbol, colors, item=None):
         opacity = symbol.opacity()
     except Exception:
         pass
+    try:
+        from qgis.core import QgsLineSymbolLayer
+    except Exception:  # pragma: no cover
+        QgsLineSymbolLayer = ()
     for li in reversed(range(symbol.symbolLayerCount())):
         sl = symbol.symbolLayer(li)
         fill = "Swatch/None"
@@ -867,12 +871,34 @@ def _symbol_layer_styles(symbol, colors, item=None):
         fill_alpha = 255
         stroke_alpha = 255
         try:
-            if hasattr(sl, "fillColor") and sl.fillColor().alpha() > 0:
+            # Line symbol layers ("Outline: Simple line" inside a fill symbol,
+            # or any layer of a line symbol) must be checked FIRST: every
+            # QgsSymbolLayer inherits fillColor()/strokeColor() from the base
+            # class, and on a line layer those return an *invalid* QColor
+            # (black, alpha 255) - the generic branch below would turn the
+            # outline into an opaque black fill with a 0 pt stroke.
+            is_line_layer = isinstance(sl, QgsLineSymbolLayer) or (
+                hasattr(sl, "width") and not hasattr(sl, "strokeWidth")
+            )
+            if is_line_layer:
+                c = _dd_color(sl, "StrokeColor", ctx, sl.color())
+                if c.alpha() > 0:
+                    stroke = colors.ref(c)
+                    stroke_alpha = c.alpha()
+                    if hasattr(sl, "widthUnit"):
+                        stroke_w_pt = _render_size_to_pt(sl.width(), sl.widthUnit())
+                    else:
+                        stroke_w_pt = sl.width() * MM2PT
+                    if stroke_w_pt <= 0:
+                        stroke_w_pt = 0.5  # QGIS hairline
+            elif hasattr(sl, "fillColor") and sl.fillColor().alpha() > 0:
                 if getattr(sl, "brushStyle", None) is None or sl.brushStyle() != Qt.BrushStyle.NoBrush:
                     fc = _dd_color(sl, "FillColor", ctx, sl.fillColor())
                     fill = colors.ref(fc)
                     fill_alpha = fc.alpha()
-            if hasattr(sl, "strokeColor") and sl.strokeColor().alpha() > 0:
+            if is_line_layer:
+                pass  # stroke fully resolved above; base-class strokeColor() is bogus
+            elif hasattr(sl, "strokeColor") and sl.strokeColor().alpha() > 0:
                 style_ok = True
                 if hasattr(sl, "strokeStyle"):
                     style_ok = sl.strokeStyle() != Qt.PenStyle.NoPen
