@@ -100,6 +100,7 @@ def _run_from_format(char_format, default_font, default_size_pt, default_color):
     family = font.family() or default_font.family()
 
     size_pt = char_format.fontPointSize()
+    css_size = bool(size_pt)   # explicit CSS font-size vs. label default
     if not size_pt:
         size_pt = font.pointSizeF()
     if not size_pt or size_pt <= 0:
@@ -116,6 +117,7 @@ def _run_from_format(char_format, default_font, default_size_pt, default_color):
         "family": family,
         "style": qfont_style_name(font),
         "size_pt": float(size_pt),
+        "css_size": css_size,
         "color": color,
         "underline": char_format.fontUnderline(),
         "strikeout": char_format.fontStrikeOut(),

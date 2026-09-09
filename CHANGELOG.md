@@ -28,6 +28,11 @@ Fixes:
 - Placed map/fallback PDFs: GraphicBounds now carry the real page box
   Qt rounded to (whole points) plus a compensating scale, instead of
   the nominal size
+- HTML-mode labels reproduce QGIS's pixel quantization: runs are sized
+  from integer pixels (1 px = 72/106.2 pt), CSS point sizes go through
+  Qt's 96-dpi conversion first (`font-size:10pt` → 13 px = 8.81 pt),
+  line pitch = ceil(fractional lineSpacing) px — measured in QGIS, dpi
+  independent. Before, InDesign text was ~13 % larger with auto leading
 
 New:
 - `pages_per_spread` (API + plugin dialog, remembered per layout in

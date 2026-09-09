@@ -57,6 +57,7 @@ scalebar / table PDFs is Qt-rendered and matches QGIS by construction.
 | 40 | **FIXED 0.7.0** | high | `mapping.py` | Round-capped dot patterns (dash ≈ 0) rendered invisible — DashedStrokeStyle dashes do not inherit the item EndCap; mapped to `$ID/Canned Dotted` |
 | 41 | **FIXED 0.7.0** | high | `mapping.py` | HTML `<table>` used as a bullet list (bullet cell + text cell) exported as a 50/50 two-column table — now a hanging-indent paragraph list |
 | 42 | **FIXED 0.7.0** | medium | `mapping.py` | Placed map/fallback PDF `GraphicBounds` used the nominal size while Qt rounds the PDF page box to whole points — now the real box plus compensating scale |
+| 43 | **FIXED 0.7.0** | high | `mapping.py` | HTML-mode labels: QGIS renders every run from an integer pixel size (1 px = 72/106.2 pt, export-dpi independent); a CSS `font-size:10pt` becomes round(10·96/72)=13 px = 8.81 pt, the label's own size S becomes round(S·106.2/72) px ≈ S, line pitch = ceil(QFontMetricsF(px font).lineSpacing()) px. The exporter wrote the nominal CSS points and let InDesign auto-lead (120 %) — text 13 % too large, lines 10 % too far apart. Now reproduced exactly (`_quantize_html_sizes`) |
 
 Findings 37–42 come from the first real InDesign round trip (2026-09-09,
 InDesign 2026 via COM, `tools/`): the earlier audits reasoned from the

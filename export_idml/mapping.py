@@ -23,7 +23,7 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape, quoteattr
 
 from qgis.PyQt.QtCore import QRectF, QSizeF, QMarginsF, Qt
-from qgis.PyQt.QtGui import QColor, QPainter, QPageSize, QPdfWriter, QImageReader
+from qgis.PyQt.QtGui import QColor, QFont, QPainter, QPageSize, QPdfWriter, QImageReader
 
 from qgis.core import (
     Qgis,
@@ -470,6 +470,59 @@ def _apply_tf_caps(tf, paragraphs):
                 r["text"] = r["text"].title()
 
 
+# How QGIS (3.44 / 4.x, Windows) actually sizes HTML-mode label text,
+# measured from its PDF output (tools/ + FIDELITY.md 43):
+#   - every run is rendered from an INTEGER pixel font size n, and one of
+#     those pixels is QGIS_HTML_PT_PER_PX points, export dpi independent;
+#   - a CSS "font-size: Xpt" goes through Qt's 96-dpi conversion first,
+#     n = round(X * 96/72) -> 10pt CSS renders 13px = 8.81pt (!);
+#   - the label's own format size S has n = round(S / QGIS_HTML_PT_PER_PX),
+#     i.e. it comes back at ~S (10pt -> 15px = 10.17pt);
+#   - line pitch = ceil(QFontMetricsF(pixel font n).lineSpacing()) px
+#     (PT Sans: 13px -> 17, 15px -> 20, 24px -> 32; the integer
+#     QFontMetrics.lineSpacing() is off by one for several sizes).
+# InDesign has no such quantization, so the exporter must reproduce it.
+QGIS_HTML_PT_PER_PX = 72.0 / 106.2
+CSS_PX_PER_PT = 96.0 / 72.0
+
+
+def _quantize_html_sizes(structure, base_font):
+    import math
+    from qgis.PyQt.QtGui import QFontMetricsF
+
+    def _para(p):
+        max_ls = 0.0
+        for r in p.get("runs", []):
+            size = float(r.get("size_pt") or 0.0)
+            if size <= 0:
+                continue
+            if r.get("css_size"):
+                n = int(round(size * CSS_PX_PER_PT))
+            else:
+                n = int(round(size / QGIS_HTML_PT_PER_PX))
+            n = max(1, n)
+            r["size_pt"] = n * QGIS_HTML_PT_PER_PX
+            try:
+                f = QFont(base_font)
+                if r.get("family"):
+                    f.setFamily(r["family"])
+                f.setPixelSize(n)
+                ls_px = math.ceil(QFontMetricsF(f).lineSpacing() - 1e-6)
+                max_ls = max(max_ls, ls_px * QGIS_HTML_PT_PER_PX)
+            except Exception:
+                pass
+        if max_ls > 0 and not p.get("line_height_pct") and not p.get("leading_pt"):
+            p["leading_pt"] = max_ls
+
+    for e in structure:
+        if e.get("type") == "table":
+            for col in e.get("columns", []):
+                for p in col:
+                    _para(p)
+        else:
+            _para(e)
+
+
 def export_label(item, pkg, spread, ctx):
     w_pt, h_pt, transform = item_geometry(item, spread)
     tf = _evaluated_text_format(item)
@@ -492,6 +545,7 @@ def export_label(item, pkg, spread, ctx):
     if html_mode:
         font.setPointSizeF(size_pt)
         structure = extract_structure(text, font, size_pt, color)
+        _quantize_html_sizes(structure, font)
         tables = [e for e in structure if e["type"] == "table"]
         loose_paras = [e for e in structure if e["type"] == "para" and e["runs"]]
         if len(tables) == 1 and not loose_paras and not item.itemRotation():
