@@ -929,6 +929,38 @@ _PEN_CAPS = {0x00: "ButtEndCap", 0x10: "ProjectingEndCap", 0x20: "RoundEndCap"}
 _PEN_JOINS = {0x00: "MiterEndJoin", 0x40: "BevelEndJoin", 0x80: "RoundEndJoin"}
 
 
+def _generator_dotted_stroke(sl, colors):
+    """Layer dict for a geometry generator that places round dots along the
+    outline (boundary($geometry)) - the QGIS stand-in for a dotted stroke
+    that, like InDesign's "Canned Dotted", puts a dot on every corner. A
+    dash pattern cannot do that: it runs round the ring regardless of the
+    corners. Returns None for any other generator."""
+    try:
+        expr = (sl.geometryExpression() or "").replace(" ", "").lower()
+        sub = sl.subSymbol()
+        if "boundary($geometry)" not in expr or sub is None or sub.symbolLayerCount() == 0:
+            return None
+        dot = sub.symbolLayer(0)
+        if not hasattr(dot, "size") or not hasattr(dot, "sizeUnit"):
+            return None
+        c = dot.color()
+        if not c.isValid() or c.alpha() == 0:
+            return None
+        colors.use_builtin_stroke_style("Canned Dotted")
+        return {
+            "fill": "Swatch/None",
+            "stroke": colors.ref(c),
+            "stroke_w_pt": _render_size_to_pt(dot.size(), dot.sizeUnit()),
+            "fill_alpha": 255,
+            "stroke_alpha": c.alpha(),
+            # same attrs the dash-pattern path emits (QGIS default join = bevel)
+            "extra_attrs": ' StrokeType="StrokeStyle/$ID/Canned Dotted"'
+                           ' EndCap="RoundEndCap" EndJoin="BevelEndJoin"',
+        }
+    except Exception:
+        return None
+
+
 def _stroke_extra_attrs(sl, stroke_w_pt, colors):
     """StrokeType (dash pattern) + EndCap/EndJoin attrs from a symbol layer."""
     attrs = ""
@@ -1022,6 +1054,17 @@ def _symbol_layer_styles(symbol, colors, item=None):
         QgsLineSymbolLayer = ()
     for li in range(symbol.symbolLayerCount()):
         sl = symbol.symbolLayer(li)
+        if type(sl).__name__ == "QgsGeometryGeneratorSymbolLayer":
+            # IDML has no geometry generators. The base-class fillColor() is
+            # an invalid QColor (black, alpha 255), so the generic branch
+            # below would paint the generator as an opaque black box. Map the
+            # one generator we can express - dots along the outline, used to
+            # put a dot on every corner like InDesign's "Canned Dotted" -
+            # and skip any other.
+            dotted = _generator_dotted_stroke(sl, colors)
+            if dotted:
+                layers.append(dotted)
+            continue
         fill = "Swatch/None"
         stroke = "Swatch/None"
         stroke_w_pt = 0.0
@@ -1544,6 +1587,34 @@ def export_fallback(item, pkg, spread, ctx):
     )
 
 
+def item_excluded_from_exports(item):
+    """True if the item is excluded from exports for the CURRENT atlas feature.
+
+    QgsLayoutItem.excludeFromExports() returns only the static checkbox; the
+    data-defined override is evaluated into a private member Python cannot
+    read. QGIS's own exporter honours that override, so evaluate it here the
+    same way - otherwise an item hidden per feature (e.g. a bonus badge that
+    only shows when a field is true) still lands in the IDML."""
+    try:
+        from qgis.core import QgsLayoutObject
+
+        key = _enum(QgsLayoutObject, "DataDefinedProperty", "ExcludeFromExports")
+        props = item.dataDefinedProperties()
+        if props is not None and props.isActive(key):
+            val = props.valueAsBool(key, item.createExpressionContext(), item.excludeFromExports())
+            if isinstance(val, tuple):  # newer PyQGIS returns (value, ok)
+                val, ok = val
+                if not ok:
+                    return bool(item.excludeFromExports())
+            return bool(val)
+    except Exception:
+        pass
+    try:
+        return bool(item.excludeFromExports())
+    except AttributeError:
+        return False
+
+
 # ---------------------------------------------------------------- groups
 
 
@@ -1557,11 +1628,8 @@ def export_group(group, pkg, spread, ctx):
             return False
         if not it.isVisible():
             return False
-        try:
-            if it.excludeFromExports():
-                return False
-        except AttributeError:
-            pass
+        if item_excluded_from_exports(it):
+            return False
         return True
 
     children = [it for it in group.items() if _exportable(it)]

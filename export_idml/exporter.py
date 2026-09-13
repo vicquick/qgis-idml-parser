@@ -19,7 +19,7 @@ from qgis.core import QgsLayoutItem, QgsLayoutItemGroup, QgsLayoutItemPage
 from .fonts import FontIndex
 from .geom import mm
 from .idml_package import IdmlPackage
-from .mapping import export_item
+from .mapping import export_item, item_excluded_from_exports
 
 
 class ExportContext:
@@ -102,11 +102,8 @@ def _page_items(layout, page_index):
                 continue  # exported inside its group
         except AttributeError:
             pass
-        try:
-            if it.excludeFromExports():
-                continue
-        except AttributeError:
-            pass
+        if item_excluded_from_exports(it):
+            continue  # evaluated per atlas feature, like QGIS's own export
         inter = page_rect.intersected(it.sceneBoundingRect())
         if inter.width() < 0.01 or inter.height() < 0.01:
             continue
