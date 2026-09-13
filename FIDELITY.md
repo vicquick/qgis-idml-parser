@@ -58,10 +58,15 @@ scalebar / table PDFs is Qt-rendered and matches QGIS by construction.
 | 41 | **FIXED 0.7.0** | high | `mapping.py` | HTML `<table>` used as a bullet list (bullet cell + text cell) exported as a 50/50 two-column table — now a hanging-indent paragraph list |
 | 42 | **FIXED 0.7.0** | medium | `mapping.py` | Placed map/fallback PDF `GraphicBounds` used the nominal size while Qt rounds the PDF page box to whole points — now the real box plus compensating scale |
 | 43 | **FIXED 0.7.0** | high | `mapping.py` | HTML-mode labels: QGIS renders every run from an integer pixel size (1 px = 72/106.2 pt, export-dpi independent); a CSS `font-size:10pt` becomes round(10·96/72)=13 px = 8.81 pt, the label's own size S becomes round(S·106.2/72) px ≈ S, line pitch = ceil(QFontMetricsF(px font).lineSpacing()) px. The exporter wrote the nominal CSS points and let InDesign auto-lead (120 %) — text 13 % too large, lines 10 % too far apart. Now reproduced exactly (`_quantize_html_sizes`) |
+| 44 | **FIXED 0.7.1** | high | `mapping.py` | Geometry-generator symbol layers exported as opaque black boxes — base-class `fillColor()` is an invalid black QColor and IDML has no generators. A generator placing dots along `boundary($geometry)` (dot on every corner) now maps to `$ID/Canned Dotted`; other generators are skipped |
+| 45 | **FIXED 0.7.1** | medium | `mapping.py`, `exporter.py` | Data-defined *Exclude item from exports* ignored — `excludeFromExports()` returns only the static checkbox, so items hidden per atlas feature still landed in the IDML |
+| 46 | **FIXED 0.7.1** | medium | `mapping.py` | Link URIs were absolute (`file:C:/Users/...`) — a package moved to another folder or machine opened with every link missing. Now relative to the `.idml` folder (`file:<name> Links/x.jpg`) |
 
-Findings 37–42 come from the first real InDesign round trip (2026-09-09,
-InDesign 2026 via COM, `tools/`): the earlier audits reasoned from the
-IDML spec and the QGIS API alone.
+Findings 37–46 come from real InDesign round trips (2026-09-09 and
+2026-09-13, InDesign 2026 via COM, `tools/`): the earlier audits
+reasoned from the IDML spec and the QGIS API alone. The InDesign
+behaviours behind them are collected in the README section *InDesign
+quirks — verified verdicts*.
 
 ## Details
 
@@ -261,7 +266,7 @@ _para_from_block (lines 68-96) never reads block.tabPositions(). story_xml's par
 
 *medium · `export_idml/mapping.py`*
 
-item_geometry() (line ~176) reads rot = item.itemRotation(). QGIS's own API doc for itemRotation() explicitly warns: 'this method will always return the user-set rotation for the item, which may differ from the current item rotation (if data defined rotation settings are present). Use QGraphicsItem.rotation() to obtain the current item rotation.' Confirmed live that QgsLayoutObject exposes an ItemRotation data-defined property (QgsLayoutObject.ItemRotation), so a layout item's rotation CAN legitimately be driven by an expression (e.g. rotating a directional icon/label per atlas feature - a realistic pattern for atlas-driven exports). Because the code never consults dataDefinedProperties().property(QgsLayoutObject.ItemRotation) nor uses item.rotation(), any such item is exported at its static base rotation (often 0) instead of the per-feature evaluated …
+item_geometry() (line ~176) reads rot = item.itemRotation(). QGIS's own API doc for itemRotation() explicitly warns: 'this method will always return the user-set rotation for the item, which may differ from the current item rotation (if data defined rotation settings are present). Use QGraphicsItem.rotation() to obtain the current item rotation.' Confirmed live that QgsLayoutObject exposes an ItemRotation data-defined property (QgsLayoutObject.ItemRotation), so a layout item's rotation CAN legitimately be driven by an expression (e.g. rotating a directional icon/label per atlas feature - a realistic pattern for atlas-driven report exports). Because the code never consults dataDefinedProperties().property(QgsLayoutObject.ItemRotation) nor uses item.rotation(), any such item is exported at its static base rotation (often 0) instead of the per-feature evaluated …
 
 **Suggested fix:** Use item.rotation() (the live QGraphicsItem rotation, reflecting any data-defined override after refresh) instead of item.itemRotation() when computing rot in item_geometry(), or explicitly evaluate the ItemRotation data-defined property when active.
 

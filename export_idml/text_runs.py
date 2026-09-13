@@ -1,7 +1,7 @@
 """Resolve rich text (QGIS HTML-mode labels) into styled structure.
 
 Walks the QTextDocument frame tree so TABLES survive: a <table> with two
-<td> columns (a two-column bullet list pattern) is returned as a
+<td> columns (e.g. a two-column item list) is returned as a
 table entry with per-column paragraph lists + width fractions, which the
 exporter turns into side-by-side native TextFrames.
 

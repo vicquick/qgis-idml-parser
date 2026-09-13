@@ -1,11 +1,35 @@
 # Changelog
 
+## 0.7.1 — 2026-09-13
+
+Fixes:
+- Link URIs are relative to the folder the `.idml` is written to
+  (`file:<name> Links/x.jpg`) instead of absolute `file:C:/Users/...`
+  paths — a package now opens with resolved links after being moved or
+  handed on. Verified in InDesign 21.3 (233/233 links resolved from a
+  copy in an unrelated folder). The `file:` scheme is required: a bare
+  relative path makes InDesign drop every link silently. A path on
+  another drive has no relative form and stays absolute.
+- Geometry-generator symbol layers were painted as opaque black boxes
+  (base-class `fillColor()` is an invalid black QColor, IDML has no
+  generators). A generator placing dots along `boundary($geometry)` —
+  the QGIS way to get a dot on every corner — maps to `$ID/Canned
+  Dotted`; any other generator is skipped.
+- Data-defined *Exclude item from exports* is evaluated per atlas
+  feature (`excludeFromExports()` only returns the static checkbox), for
+  top-level items and group children alike.
+- `tests/validate_idml.py` resolves relative links against the package
+  folder.
+
+Docs: README section *InDesign quirks — verified verdicts*.
+
+
 ## 0.7.0 — 2026-09-09
 
 First release verified by an actual InDesign round trip (QGIS PDF vs
-InDesign-rendered IDML, per-tile pixel diff; see tools/). production
-atlas, 45 features: 4.3/255 mean difference, remaining
-diff is anti-aliasing / JPEG resampling.
+InDesign-rendered IDML, per-tile pixel diff; see tools/). A production
+A3 atlas, 45 features: 4.3/255 mean difference, remaining diff is
+anti-aliasing / JPEG resampling.
 
 Fixes:
 - Line symbol layers inside fill symbols ("Outline: Simple line")

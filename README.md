@@ -64,14 +64,15 @@ is self-contained).
 
 Keep the `… Links/` and `Document fonts/` folders next to the `.idml` —
 placed assets and fonts are *references* (that's the point: everything
-stays editable and swappable).
+stays editable and swappable). Links are stored relative to the `.idml`,
+so the whole folder can be moved, zipped or handed on.
 
 ### Scripted / headless
 
 ```python
 from export_idml.exporter import export_layout_to_idml
 
-layout = QgsProject.instance().layoutManager().layoutByName("My Layout")
+layout = QgsProject.instance().layoutManager().layoutByName("Report")
 result = export_layout_to_idml(layout, r"C:\out\report.idml",
                                dpi=300, copy_fonts=True, atlas=True)
 print(result["spreads"], result["warnings"])
@@ -122,12 +123,38 @@ One bad item never aborts an export — it is skipped and reported in
 - **Z-order**: entities sort by z; a group sorts at its topmost child's
   z (QGIS renders group children interleaved by their own z — IDML
   groups are atomic).
-- **Link URIs** are percent-encoded (`Q&A`, umlauts, spaces in paths are
-  all legal on Windows and all break naive IDML).
+- **Link URIs** are relative to the `.idml` folder and percent-encoded
+  (`Q&A`, umlauts, spaces in paths are all legal on Windows and all
+  break naive IDML).
 - Paragraph breaks are `<Br/>` *inside* the paragraph's last
   `CharacterStyleRange`; soft line breaks are `U+2028`; soft hyphens
   (`U+00AD`, e.g. from pyphen-based QGIS expressions) pass through and
   InDesign treats them as discretionary hyphens.
+
+## InDesign quirks — verified verdicts
+
+Behaviour confirmed by opening exported packages in a real InDesign 2026
+(21.x, Windows, via COM — `tools/`), not inferred from the IDML spec.
+**Handled** = the exporter/tools already account for it; **trap** = only
+matters when scripting InDesign yourself.
+
+| Quirk | Verdict | Handling |
+|---|---|---|
+| `PagesPerDocument` in Preferences.xml > 1: InDesign first builds that many pages two-per-spread, then replaces only the first spread — ceil(N/2)−1 empty facing spreads in front | confirmed | handled — always `1`, like InDesign's own IDML |
+| Relative `LinkResourceURI` | works, resolved against the `.idml` folder — **only with the `file:` scheme**; a bare relative path silently drops every link | handled — `file:<name> Links/x.jpg` |
+| Spaces, umlauts, parens in link paths | must be percent-encoded | handled |
+| `DashedStrokeStyle` with ≈0-length dashes + round cap | accepted but paints nothing; the item `EndCap` does not extend dash segments | handled — `$ID/Canned Dotted` (dot every ≈3.1 × weight) |
+| Canned Dotted vs a QGIS dash pattern | Canned Dotted adjusts spacing per edge so a dot sits on every corner; a dash pattern cannot — use a geometry generator in QGIS | handled — generator maps back to Canned Dotted |
+| Facing spread from one wide page | `PageCount=N`, N `<Page>` of width W/N; item coordinates unchanged; `AllowPageShuffle="true"` harmless | handled — `pages_per_spread` |
+| QGIS symbol layer index 0 | is the **bottom** layer (painted first) | handled — emitted in index order |
+| `fillColor()`/`strokeColor()` on line layers and geometry generators | base class returns an invalid QColor = opaque black | handled — type-checked first |
+| `excludeFromExports()` | returns only the checkbox, not the data-defined override | handled — override evaluated per feature |
+| QGIS HTML-mode label sizes | pixel-quantized: 1 px = 72/106.2 pt, CSS pt → round(pt·96/72) px, line pitch = ceil(lineSpacing) px, dpi-independent | handled — `_quantize_html_sizes` |
+| Placed PDF page box | Qt rounds it to whole points | handled — real box + compensating scale |
+| Stretched pictures | geometrically exact (scale 1.000 both axes); remaining pixel diff is resampling | don't chase |
+| Char highlights, font-file first-baseline metrics, dpi hairlines | no IDML equivalent | documented, warned — see FIDELITY.md |
+| COM `app.Open(path)` on a file the user already has open | returns **that** document, unsaved edits included — closing it destroys their work | trap — tools open a uniquely named temp copy and close only if `Documents.Count` grew |
+| Two COM open jobs at once | InDesign deadlocks (0 % CPU, no dialog, "not responding"); only a kill helps. A large (45-spread) open can also freeze once | trap — serialize every render/probe |
 
 ## Known limitations / fidelity gaps
 
@@ -177,6 +204,12 @@ tests/
   standalone_test.py  full item-type smoke test (runs under python-qgis)
   atlas_test.py       3-feature atlas test
   validate_idml.py    structural validator (plain python)
+tools/
+  indesign_render.py  COM: open a temp copy, export PDF, dump preflight + page items
+  indesign_probe.py   COM: page/spread structure only
+  compare_pdf.py      QGIS PDF vs InDesign PDF: blend, heat map, per-tile scores
+  idml_patch.py       regex A/B patches on a package
+  merge_idml.py       merge packages, rewrite link paths
 deploy.ps1            copy into QGIS3 + QGIS4 profiles
 ```
 

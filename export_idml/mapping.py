@@ -340,8 +340,8 @@ def _natural_width_pt(paragraphs):
 
 def _table_is_bullet_list(table):
     """Finding html-table-bullet-list-split: detect the per-row
-    '<td>bullet</td><td>text</td>' hanging-indent trick (a common layout-script
-    template) so it is not misread as a genuine side-by-side
+    '<td>bullet</td><td>text</td>' hanging-indent trick (a common HTML
+    label template) so it is not misread as a genuine side-by-side
     column split. True when the table has exactly 2 columns, both with
     the same row count, and column 0 is one short, identical,
     non-alphanumeric marker per row (e.g. '•\xa0\xa0')."""
