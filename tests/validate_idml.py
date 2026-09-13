@@ -82,6 +82,9 @@ def validate(path):
                 import os
 
                 p = unquote(re.sub("^///", "", uri[5:]))
+                if not re.match(r"^[A-Za-z]:|^/", p):
+                    # relative link: InDesign resolves it against the .idml's folder
+                    p = os.path.join(os.path.dirname(os.path.abspath(path)), p)
                 if not os.path.exists(p):
                     errors.append("{}: broken link {}".format(name, uri))
         for ppa in root.iter("PathPointArray"):

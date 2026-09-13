@@ -25,6 +25,8 @@ from .mapping import export_item, item_excluded_from_exports
 class ExportContext:
     def __init__(self, links_dir, dpi=300, copy_fonts=True, warnings=None):
         self.links_dir = links_dir
+        # the .idml sits next to its Links folder; link URIs are relative to it
+        self.idml_dir = os.path.dirname(os.path.abspath(links_dir))
         self.dpi = dpi
         self.copy_fonts = copy_fonts
         self.warnings = warnings if warnings is not None else []

@@ -105,13 +105,25 @@ def _render_size_to_pt(size, unit):
     return size
 
 
-def file_uri(path):
+def file_uri(path, base_dir=None):
     """InDesign-style link URI (spec example: LinkResourceURI="file:C:/x.jpg").
+
+    With base_dir (the folder the .idml is written to) the link is relative
+    to it - "file:TEST Links/x.jpg" - so the package can be moved or handed
+    on. InDesign resolves that against the .idml's own folder (verified in
+    InDesign 21.3); the "file:" scheme is required, without it InDesign drops
+    the link. A path on another drive has no relative form and stays absolute.
 
     Percent-encoded (spaces, umlauts, parens - InDesign resolves URIs, so
     "TEST Links/Bäderpark (Nord).jpg" must become %20/%C3%A4/%28...),
     then XML-escaped for the attribute context."""
-    p = os.path.abspath(path).replace("\\", "/")
+    p = os.path.abspath(path)
+    if base_dir:
+        try:
+            p = os.path.relpath(p, os.path.abspath(base_dir))
+        except ValueError:
+            pass
+    p = p.replace("\\", "/")
     return escape("file:" + quote(p, safe="/:"))
 
 
@@ -235,7 +247,8 @@ def _pdf_writer(path, w_pt, h_pt, dpi):
 
 
 def placed_pdf_xml(idgen, colors, item_attrs, w_pt, h_pt, transform, pdf_path,
-                   name='"$ID/"', extra_xml="", asset_w_pt=None, asset_h_pt=None):
+                   name='"$ID/"', extra_xml="", asset_w_pt=None, asset_h_pt=None,
+                   base_dir=None):
     """Rectangle frame + placed PDF + Link (referenced, never embedded).
 
     Finding map-pdf-page-size-rounding: asset_w_pt/asset_h_pt is the REAL
@@ -288,7 +301,7 @@ def placed_pdf_xml(idgen, colors, item_attrs, w_pt, h_pt, transform, pdf_path,
             psy=fmt(psy),
             aw=fmt(asset_w_pt),
             ah=fmt(asset_h_pt),
-            uri=file_uri(pdf_path),
+            uri=file_uri(pdf_path, base_dir),
         )
     )
 
@@ -1369,6 +1382,7 @@ def export_picture(item, pkg, spread, ctx):
                 linked,
                 name=_item_name(item),
                 extra_xml=frame_transparency,
+                base_dir=ctx.idml_dir,
             )
         )
         return
@@ -1429,7 +1443,7 @@ def export_picture(item, pkg, spread, ctx):
             sy=fmt(sy),
             nw=fmt(nat_w),
             nh=fmt(nat_h),
-            uri=file_uri(linked),
+            uri=file_uri(linked, ctx.idml_dir),
             fmt=fmt_name,
         )
     )
@@ -1490,6 +1504,7 @@ def export_map(item, pkg, spread, ctx):
             extra_xml=frame_transparency,
             asset_w_pt=asset_w_pt,
             asset_h_pt=asset_h_pt,
+            base_dir=ctx.idml_dir,
         )
     )
 
@@ -1583,6 +1598,7 @@ def export_fallback(item, pkg, spread, ctx):
             ),
             asset_w_pt=asset_bw_pt,
             asset_h_pt=asset_bh_pt,
+            base_dir=ctx.idml_dir,
         )
     )
 
