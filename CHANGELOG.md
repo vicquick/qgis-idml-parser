@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Features:
+- Rounded corners survive into InDesign as native, editable corner options:
+  - a map clipped to a rounded rectangle shape gets the shape's radius on
+    its frame (InDesign clips the placed PDF itself);
+  - a geometry-generator fill that rounds ONE corner of the item rectangle
+    (difference with the corner square + quarter circle, anchored on
+    x_min/x_max/y_min/y_max) maps to a plain rectangle fill with that single
+    `CornerOption="RoundedCorner"`. QGIS shapes only round all four corners,
+    so a caption chip with one rounded corner and a data-defined width is
+    drawn this way.
+  - A single rounded corner may use a radius up to the full short side
+    (InDesign templates put 4.23 mm on a 6 mm chip); four corners stay capped
+    at half.
+- Symbol-layer drop shadows (`QgsDropShadowEffect` under *Draw effects*) map
+  to InDesign `DropShadowSetting` on shapes, polygons and polylines.
+
+Verified: 45-spread atlas export, `tests/validate_idml.py` OK, InDesign 21.3
+render of two spreads shows every rounded frame and chip as in QGIS.
+
 ## 0.7.1 — 2026-09-13
 
 Fixes:

@@ -907,6 +907,49 @@ def _transparency_xml(object_opacity=1.0, fill_alpha=255, stroke_alpha=255,
     return "".join(parts)
 
 
+def _symbol_layer_shadow(sl, colors):
+    """<DropShadowSetting> for a symbol layer's paint effect, or "".
+
+    A QgsDropShadowEffect on a symbol layer (Symbol > Draw effects) shadows
+    exactly what that layer paints - for a stroke-only frame, the stroke.
+    InDesign's object drop shadow on the matching stroke-only rectangle does
+    the same, so it maps 1:1. QgsShadowEffect offsets by angle clockwise
+    from north (x = d*sin a, y = -d*cos a, y down), like the text shadow.
+    QGIS blurs with a stack blur of blurLevel; InDesign's Size is the
+    feather radius - used as-is. Inner shadows and other effects are
+    skipped (the source is still exported)."""
+    try:
+        import math
+
+        pe = sl.paintEffect()
+        if pe is None or not pe.enabled():
+            return ""
+        effects = [pe.effect(i) for i in range(pe.count())] if hasattr(pe, "effect") else [pe]
+        for e in effects:
+            if e is None or not e.enabled() or type(e).__name__ != "QgsDropShadowEffect":
+                continue
+            d = _render_size_to_pt(e.offsetDistance(), e.offsetUnit())
+            a = math.radians(e.offsetAngle())
+            blur = _render_size_to_pt(e.blurLevel(), e.blurUnit())
+            blend = _BLEND_MODES.get(enum_int(e.blendMode()), "Normal")
+            return (
+                '<DropShadowSetting Mode="Drop" BlendMode="{bm}" Opacity="{op}" '
+                'Radius="{blur}" XOffset="{dx}" YOffset="{dy}" EffectColor={col} '
+                'Spread="0" Noise="0" KnockedOut="true" UseGlobalLight="false" '
+                'HonorOtherEffects="false"/>'.format(
+                    bm=blend,
+                    op=fmt(e.opacity() * 100.0),
+                    blur=fmt(blur),
+                    dx=fmt(d * math.sin(a)),
+                    dy=fmt(-d * math.cos(a)),
+                    col=quoteattr(colors.ref(e.color())),
+                )
+            )
+    except Exception:
+        pass
+    return ""
+
+
 def _dd_color(sl, prop_name, ctx, default):
     """Evaluate a data-defined symbol-layer color (e.g. rating squares
     whose fill is a CASE expression over atlas-feature attributes).
@@ -972,6 +1015,87 @@ def _generator_dotted_stroke(sl, colors):
         }
     except Exception:
         return None
+
+
+def _generator_rounded_fill(sl, colors):
+    """Layer dict for a geometry generator that rounds ONE corner of the
+    item rectangle: difference($geometry, corner square) united with a
+    quarter circle, built from x_min/x_max/y_min/y_max($geometry). QGIS
+    shapes can only round all four corners at once, so a caption chip with
+    a single rounded corner (and a data-defined width that follows its text)
+    is drawn this way. InDesign rounds corners per corner natively, so the
+    generator maps back to a plain rectangle fill plus that one
+    CornerOption. The corner is read from the variables the expression
+    anchors on (@x0/@x1 with @y0/@y1, y grows downward); the radius from
+    the first min(<r>, ...). Returns None for any other generator."""
+    try:
+        import re as _re
+
+        expr = (sl.geometryExpression() or "").replace(" ", "").lower()
+        if "make_rectangle_3points" not in expr or "buffer(make_point" not in expr:
+            return None
+        sub = sl.subSymbol()
+        if sub is None or sub.symbolLayerCount() == 0:
+            return None
+        fl = sub.symbolLayer(0)
+        if not hasattr(fl, "fillColor"):
+            return None
+        c = fl.fillColor()
+        if not c.isValid() or c.alpha() == 0:
+            return None
+        m = _re.search(r"min\(([0-9.]+),", expr)
+        r_mm = float(m.group(1)) if m else 0.0
+        horiz = "Right" if "'x1'" in expr else "Left"
+        vert = "Top" if "'y0'" in expr else "Bottom"
+        corner = vert + horiz
+        r_pt = r_mm * MM2PT
+        return {
+            "fill": colors.ref(c),
+            "stroke": "Swatch/None",
+            "stroke_w_pt": 0.0,
+            "fill_alpha": c.alpha(),
+            "stroke_alpha": 255,
+            "extra_attrs": "",
+            "corner_radius_pt": r_pt,
+            "corners": (corner,),
+        }
+    except Exception:
+        return None
+
+
+def _corner_attrs(corners, r_pt, w_pt, h_pt):
+    """CornerOption/CornerRadius attribute string for the given corners.
+    Four rounded corners are capped at half the frame (InDesign rejects
+    larger); a single rounded corner may use up to the full short side -
+    InDesign-authored templates do that (4,23 mm on a 6 mm caption chip)."""
+    limit = min(w_pt, h_pt) if len(corners) == 1 else min(w_pt, h_pt) / 2.0
+    r_pt = min(r_pt, limit)
+    if r_pt <= 0 or not corners:
+        return ""
+    return " ".join(
+        '{}CornerOption="RoundedCorner" {}CornerRadius="{}"'.format(c, c, fmt(r_pt))
+        for c in corners
+    ) + " "
+
+
+def _clip_corner_attrs(item, w_pt, h_pt):
+    """Corner attrs for a map clipped to a rounded rectangle shape: InDesign
+    clips the placed content to a rounded frame natively, so the rounding
+    survives as an editable frame property instead of being lost."""
+    try:
+        cs = item.itemClippingSettings()
+        if not cs.enabled():
+            return ""
+        src = cs.sourceItem()
+        if not isinstance(src, QgsLayoutItemShape):
+            return ""
+        if src.shapeType() != _enum(QgsLayoutItemShape, "Shape", "Rectangle"):
+            return ""
+        cr = src.cornerRadius()
+        r_pt = cr.length() * _unit_to_pt_factor(cr.units())
+        return _corner_attrs(("TopLeft", "TopRight", "BottomLeft", "BottomRight"), r_pt, w_pt, h_pt)
+    except Exception:
+        return ""
 
 
 def _stroke_extra_attrs(sl, stroke_w_pt, colors):
@@ -1077,6 +1201,10 @@ def _symbol_layer_styles(symbol, colors, item=None):
             dotted = _generator_dotted_stroke(sl, colors)
             if dotted:
                 layers.append(dotted)
+                continue
+            rounded = _generator_rounded_fill(sl, colors)
+            if rounded:
+                layers.append(rounded)
             continue
         fill = "Swatch/None"
         stroke = "Swatch/None"
@@ -1149,6 +1277,7 @@ def _symbol_layer_styles(symbol, colors, item=None):
             "fill_alpha": fill_alpha,
             "stroke_alpha": stroke_alpha,
             "extra_attrs": _stroke_extra_attrs(sl, stroke_w_pt, colors),
+            "shadow_inner": _symbol_layer_shadow(sl, colors),
         })
     return layers, opacity
 
@@ -1204,11 +1333,15 @@ def export_shape(item, pkg, spread, ctx):
             lay["fill_alpha"],
             lay["stroke_alpha"],
             blend_mode=blend,
+            shadow_inner=lay.get("shadow_inner", ""),
         )
         name = _item_name(item)
         if len(layers) > 1 and li < len(layers) - 1:
             name = quoteattr("{}_l{}".format(
                 (item.id() or "shape"), len(layers) - li))
+        layer_corners = corner_attrs
+        if lay.get("corners") and tag == "Rectangle":
+            layer_corners = _corner_attrs(lay["corners"], lay.get("corner_radius_pt", 0.0), w_pt, h_pt)
         self_id = pkg.idgen.next("sh")
         spread.add(
             '<{tag} Self="{sid}" ContentType="Unassigned" ItemLayer="qxLayer1" '
@@ -1226,7 +1359,7 @@ def export_shape(item, pkg, spread, ctx):
                 stroke=lay["stroke"],
                 sw=fmt(lay["stroke_w_pt"]),
                 extra=lay["extra_attrs"],
-                corners=corner_attrs,
+                corners=layer_corners,
                 tf=transform,
                 path=path,
                 transparency=transparency,
@@ -1281,6 +1414,7 @@ def export_polygon(item, pkg, spread, ctx):
                     lay["fill_alpha"],
                     lay["stroke_alpha"],
                     blend_mode=blend,
+                    shadow_inner=lay.get("shadow_inner", ""),
                 ),
             )
         )
@@ -1304,7 +1438,7 @@ def export_polyline(item, pkg, spread, ctx):
     stroke_w = lay["stroke_w_pt"] or 1.0
     transparency = _transparency_xml(
         sym_opacity * item_opacity, 255, lay.get("stroke_alpha", 255),
-        blend_mode=blend,
+        blend_mode=blend, shadow_inner=lay.get("shadow_inner", ""),
     )
     self_id = pkg.idgen.next("gl")
     spread.add(
@@ -1491,6 +1625,7 @@ def export_map(item, pkg, spread, ctx):
 
     op, blend = _item_effects(item, ctx)
     attrs, frame_transparency = item_frame_style(item, pkg.colors, op, blend)
+    attrs = (_clip_corner_attrs(item, w_pt, h_pt) + attrs).strip()
     spread.add(
         placed_pdf_xml(
             pkg.idgen,
