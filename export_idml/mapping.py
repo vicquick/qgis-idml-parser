@@ -1595,7 +1595,7 @@ def export_map(item, pkg, spread, ctx):
     w_px = r.width() / 25.4 * dpi
     h_px = r.height() / 25.4 * dpi
 
-    pdf_path = ctx.link_path("map_{}.pdf".format(ctx.next_asset_index()))
+    pdf_path = ctx.link_path(ctx.asset_filename("map", item.id(), ".pdf"))
     ms = item.mapSettings(item.extent(), QSizeF(w_px, h_px), dpi, True)
     try:
         ms.setFlag(Qgis.MapSettingsFlag.ForceVectorOutput, True)
@@ -1661,7 +1661,7 @@ def export_fallback(item, pkg, spread, ctx):
 
     layout = item.layout()
     pdf_path = ctx.link_path(
-        "{}_{}.pdf".format(type(item).__name__.lower(), ctx.next_asset_index())
+        ctx.asset_filename(type(item).__name__.lower(), item.id(), ".pdf")
     )
 
     others = [

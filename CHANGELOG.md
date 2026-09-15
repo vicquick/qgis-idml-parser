@@ -15,6 +15,11 @@ Features:
   - A single rounded corner may use a radius up to the full short side
     (InDesign templates put 4.23 mm on a 6 mm chip); four corners stay capped
     at half.
+- Rendered assets in an atlas export are named after the feature: the atlas
+  page-name expression plus the item id (`<page name>_<item id>.pdf`, e.g.
+  `Main Street_Overview map.pdf`) instead of `map_<n>.pdf`. Windows-illegal
+  characters become `-`, duplicates get `_2`; non-atlas exports keep the
+  numbered names.
 - Symbol-layer drop shadows (`QgsDropShadowEffect` under *Draw effects*) map
   to InDesign `DropShadowSetting` on shapes, polygons and polylines.
 

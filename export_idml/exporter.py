@@ -12,6 +12,7 @@ InDesign's own File > Package produces.
 """
 
 import os
+import re
 import shutil
 
 from qgis.core import QgsLayoutItem, QgsLayoutItemGroup, QgsLayoutItemPage
@@ -20,6 +21,17 @@ from .fonts import FontIndex
 from .geom import mm
 from .idml_package import IdmlPackage
 from .mapping import export_item, item_excluded_from_exports
+
+
+_ILLEGAL_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def sanitize_filename(text, max_len=80):
+    """File-name-safe version of a label: Windows-illegal characters become
+    "-", whitespace runs collapse, trailing dots/spaces are dropped."""
+    s = _ILLEGAL_FILENAME.sub("-", str(text or ""))
+    s = re.sub(r"\s+", " ", s).strip().rstrip(". ")
+    return s[:max_len].rstrip(". ")
 
 
 class ExportContext:
@@ -31,6 +43,10 @@ class ExportContext:
         self.copy_fonts = copy_fonts
         self.warnings = warnings if warnings is not None else []
         self._asset_n = 0
+        # atlas page name of the feature being exported ("" outside an atlas);
+        # rendered assets are named after it so the Links folder is readable
+        self.asset_prefix = ""
+        self._asset_names = set()
 
     def warn(self, message):
         self.warnings.append(message)
@@ -38,6 +54,26 @@ class ExportContext:
     def next_asset_index(self):
         self._asset_n += 1
         return self._asset_n
+
+    def asset_filename(self, kind, item_id, ext):
+        """Links file name for a rendered asset (map / fallback snippet).
+
+        Inside an atlas: "<page name>_<item id>.pdf", e.g.
+        "Main Street_Detail map.pdf" - the page name comes
+        from the atlas page-name expression. Outside an atlas, or when the
+        page name is empty: the numbered "<kind>_<n>.pdf" as before. Names
+        are sanitized for Windows and made unique within the run."""
+        n = self.next_asset_index()
+        base = "{}_{}".format(kind, n)
+        if self.asset_prefix:
+            base = "{}_{}".format(self.asset_prefix, sanitize_filename(item_id or kind))
+        name = base + ext
+        k = 2
+        while name.lower() in self._asset_names:
+            name = "{}_{}{}".format(base, k, ext)
+            k += 1
+        self._asset_names.add(name.lower())
+        return name
 
     def link_path(self, filename):
         os.makedirs(self.links_dir, exist_ok=True)
@@ -248,11 +284,16 @@ def export_layout_to_idml(
             for i in range(atl.count()):
                 atl.seekTo(i)
                 layout.refresh()
+                try:
+                    ctx.asset_prefix = sanitize_filename(atl.nameForPage(i))
+                except Exception:
+                    ctx.asset_prefix = ""
                 _export_pages(layout, pkg, ctx, warnings)
                 features_done += 1
                 if feedback:
                     feedback(i + 1, atl.count())
         finally:
+            ctx.asset_prefix = ""
             atl.endRender()
     else:
         _export_pages(layout, pkg, ctx, warnings)
