@@ -37,7 +37,7 @@ _ALIGN = {
     int(Qt.AlignmentFlag.AlignLeft): "LeftAlign",
     int(Qt.AlignmentFlag.AlignHCenter): "CenterAlign",
     int(Qt.AlignmentFlag.AlignRight): "RightAlign",
-    int(Qt.AlignmentFlag.AlignJustify): "FullyJustified",
+    int(Qt.AlignmentFlag.AlignJustify): "LeftJustified",  # Qt justify = last line left
 }
 
 

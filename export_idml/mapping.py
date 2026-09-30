@@ -550,7 +550,7 @@ def export_label(item, pkg, spread, ctx):
         int(Qt.AlignmentFlag.AlignLeft): "LeftAlign",
         int(Qt.AlignmentFlag.AlignHCenter): "CenterAlign",
         int(Qt.AlignmentFlag.AlignRight): "RightAlign",
-        int(Qt.AlignmentFlag.AlignJustify): "FullyJustified",
+        int(Qt.AlignmentFlag.AlignJustify): "LeftJustified",  # Qt justify = last line left
     }.get(int(item.hAlign()) & int(Qt.AlignmentFlag.AlignHorizontal_Mask), "LeftAlign")
 
     text = item.currentText()
@@ -757,7 +757,7 @@ def export_label(item, pkg, spread, ctx):
             as_type = "HeightOnly"
         v = {"TopAlign": "Top", "CenterAlign": "Center", "BottomAlign": "Bottom"}[valign]
         h = {"LeftAlign": "Left", "CenterAlign": "Center", "RightAlign": "Right",
-             "FullyJustified": "Left"}[halign]
+             "FullyJustified": "Left", "LeftJustified": "Left"}[halign]
         ref = {
             ("Top", "Left"): "TopLeftPoint",
             ("Top", "Center"): "TopCenterPoint",
