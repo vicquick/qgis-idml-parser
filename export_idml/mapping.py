@@ -550,8 +550,6 @@ def _allows_html(tf):
         return False
 
 
-FONT_MODE_PDF_SCALE = 1.00447
-
 # Trailing U+2010 HYPHEN marks a discretionary break in pre-broken text.
 PREBROKEN_HYPHEN = "‐"
 
@@ -657,12 +655,6 @@ def export_label(item, pkg, spread, ctx):
                 m = re.search(r"line-height\s*:\s*([\d.]+)\s*pt", attrs, re.I)
                 if m:
                     p["leading_pt"] = float(m.group(1))
-        # QgsTextRenderer draws the format size 0.447 % larger in PDF output
-        # (measured QGIS 4.3, PT Sans: 10 pt -> 10.045 pt, 9.955 pt -> 9.9995 pt)
-        for p in paragraphs:
-            for r in p["runs"]:
-                if r.get("size_pt") and abs(r["size_pt"] - size_pt) < 1e-3:
-                    r["size_pt"] = round(size_pt * FONT_MODE_PDF_SCALE, 2)
         paragraphs = _merge_prebroken_lines(paragraphs)
     else:
         # named style (e.g. "Thin") often isn't reflected in QFont.styleName()
