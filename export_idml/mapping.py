@@ -550,8 +550,10 @@ def _allows_html(tf):
         return False
 
 
-# Trailing U+2010 HYPHEN marks a discretionary break in pre-broken text.
-PREBROKEN_HYPHEN = "‐"
+# A trailing U+2011 NON-BREAKING HYPHEN (or U+2010 HYPHEN) marks a discretionary
+# break in pre-broken text. U+2011 is preferred: many text fonts lack a U+2010
+# glyph and Qt then draws it in a fallback font.
+PREBROKEN_HYPHEN = ("‑", "‐")
 
 
 def _merge_prebroken_lines(paragraphs):
@@ -562,7 +564,7 @@ def _merge_prebroken_lines(paragraphs):
     left-aligned (QgsTextRenderer never stretches a left-aligned block). InDesign
     needs the paragraph back to set its own lines: consecutive justified blocks up to
     and including the next non-justified block become one LeftJustified paragraph.
-    A line ending in U+2010 was hyphenated there (hyphen dropped, no space);
+    A line ending in U+2011/U+2010 was hyphenated there (hyphen dropped, no space);
     any other line end is a space.
     """
     if not any(p.get("align") == "LeftJustified" for p in paragraphs):
