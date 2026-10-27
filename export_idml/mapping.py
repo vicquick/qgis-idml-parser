@@ -509,7 +509,9 @@ def _quantize_html_sizes(structure, base_font):
             size = float(r.get("size_pt") or 0.0)
             if size <= 0:
                 continue
-            if r.get("css_size"):
+            if r.get("css_px"):
+                n = int(r["css_px"])          # CSS px: rendered as exactly n pixels
+            elif r.get("css_size"):
                 n = int(round(size * CSS_PX_PER_PT))
             else:
                 n = int(round(size / QGIS_HTML_PT_PER_PX))
@@ -524,8 +526,11 @@ def _quantize_html_sizes(structure, base_font):
                 max_ls = max(max_ls, ls_px * QGIS_HTML_PT_PER_PX)
             except Exception:
                 pass
-        if max_ls > 0 and not p.get("line_height_pct") and not p.get("leading_pt"):
-            p["leading_pt"] = max_ls
+        if max_ls > 0 and not p.get("leading_pt"):
+            # CSS line-height % scales the natural (quantized) line pitch, not the
+            # font size: PT Sans 15 px -> 20 px pitch, 96 % -> 13.0 pt (measured)
+            pct = p.get("line_height_pct")
+            p["leading_pt"] = max_ls * pct / 100.0 if pct else max_ls
 
     for e in structure:
         if e.get("type") == "table":
@@ -534,6 +539,7 @@ def _quantize_html_sizes(structure, base_font):
                     _para(p)
         else:
             _para(e)
+
 
 
 def export_label(item, pkg, spread, ctx):
@@ -558,6 +564,9 @@ def export_label(item, pkg, spread, ctx):
     if html_mode:
         font.setPointSizeF(size_pt)
         structure = extract_structure(text, font, size_pt, color)
+        # NB: QGIS ignores the label format's line height for HTML text (the pitch
+        # is the font's natural line spacing or a CSS line-height %), so it is not
+        # applied here either.
         _quantize_html_sizes(structure, font)
         tables = [e for e in structure if e["type"] == "table"]
         loose_paras = [e for e in structure if e["type"] == "para" and e["runs"]]

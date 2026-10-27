@@ -101,11 +101,15 @@ def _run_from_format(char_format, default_font, default_size_pt, default_color):
 
     size_pt = char_format.fontPointSize()
     css_size = bool(size_pt)   # explicit CSS font-size vs. label default
+    css_px = None
     if not size_pt:
         size_pt = font.pointSizeF()
     if not size_pt or size_pt <= 0:
         px = font.pixelSize()
         if px and px > 0:
+            # CSS "font-size:Npx": QGIS renders exactly N pixels - keep N, the
+            # quantizer must not round the 0.75-pt equivalent a second time
+            css_px = int(px)
             size_pt = px * PX2PT
         else:
             size_pt = default_size_pt
@@ -118,6 +122,7 @@ def _run_from_format(char_format, default_font, default_size_pt, default_color):
         "style": qfont_style_name(font),
         "size_pt": float(size_pt),
         "css_size": css_size,
+        "css_px": css_px,
         "color": color,
         "underline": char_format.fontUnderline(),
         "strikeout": char_format.fontStrikeOut(),
