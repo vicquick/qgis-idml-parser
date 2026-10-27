@@ -19,6 +19,7 @@ that pipeline produces per-glyph text and subset fonts (QGIS #48419 /
 """
 
 import os
+import re
 from urllib.parse import quote
 from xml.sax.saxutils import escape, quoteattr
 
@@ -542,6 +543,53 @@ def _quantize_html_sizes(structure, base_font):
 
 
 
+def _allows_html(tf):
+    try:
+        return bool(tf.allowHtmlFormatting())
+    except Exception:
+        return False
+
+
+FONT_MODE_PDF_SCALE = 1.00447
+
+# Trailing U+2010 HYPHEN marks a discretionary break in pre-broken text.
+PREBROKEN_HYPHEN = "‐"
+
+
+def _merge_prebroken_lines(paragraphs):
+    """Re-join text that was broken into one block per line for QgsTextRenderer.
+
+    QgsTextRenderer only wraps at spaces, so exact-size justified text is fed to it
+    pre-broken: one block per line, justified, with the last line of each paragraph
+    left-aligned (QgsTextRenderer never stretches a left-aligned block). InDesign
+    needs the paragraph back to set its own lines: consecutive justified blocks up to
+    and including the next non-justified block become one LeftJustified paragraph.
+    A line ending in U+2010 was hyphenated there (hyphen dropped, no space);
+    any other line end is a space.
+    """
+    if not any(p.get("align") == "LeftJustified" for p in paragraphs):
+        return paragraphs
+    out, cur = [], None
+    for p in paragraphs:
+        if cur is None:
+            cur = dict(p, runs=[dict(r) for r in p["runs"]])
+        else:
+            last = cur["runs"][-1] if cur["runs"] else None
+            runs = [dict(r) for r in p["runs"]]
+            if last is not None and last.get("text", "").endswith(PREBROKEN_HYPHEN):
+                last["text"] = last["text"][:-1]
+            elif last is not None and runs:
+                last["text"] = last.get("text", "") + " "
+            cur["runs"].extend(runs)
+        if p.get("align") != "LeftJustified":
+            cur["align"] = "LeftJustified"
+            out.append(cur)
+            cur = None
+    if cur is not None:
+        out.append(cur)
+    return out
+
+
 def export_label(item, pkg, spread, ctx):
     w_pt, h_pt, transform = item_geometry(item, spread)
     tf = _evaluated_text_format(item)
@@ -591,6 +639,31 @@ def export_label(item, pkg, spread, ctx):
                         paragraphs.extend(col)
                 else:
                     paragraphs.append(e)
+    elif _allows_html(tf):
+        # font mode with "Allow HTML formatting": QgsTextRenderer draws the
+        # HTML blocks itself, at exact point sizes and the format's line height
+        font.setPointSizeF(size_pt)
+        paragraphs = []
+        for e in extract_structure(text, font, size_pt, color):
+            if e["type"] == "table":
+                for col in e["columns"]:
+                    paragraphs.extend(col)
+            else:
+                paragraphs.append(e)
+        # QgsTextDocument reads CSS line-height in pt itself; QTextDocument drops it
+        p_styles = re.findall(r"<p\b([^>]*)>", text or "", re.I)
+        if len(p_styles) == len(paragraphs):
+            for p, attrs in zip(paragraphs, p_styles):
+                m = re.search(r"line-height\s*:\s*([\d.]+)\s*pt", attrs, re.I)
+                if m:
+                    p["leading_pt"] = float(m.group(1))
+        # QgsTextRenderer draws the format size 0.447 % larger in PDF output
+        # (measured QGIS 4.3, PT Sans: 10 pt -> 10.045 pt, 9.955 pt -> 9.9995 pt)
+        for p in paragraphs:
+            for r in p["runs"]:
+                if r.get("size_pt") and abs(r["size_pt"] - size_pt) < 1e-3:
+                    r["size_pt"] = round(size_pt * FONT_MODE_PDF_SCALE, 2)
+        paragraphs = _merge_prebroken_lines(paragraphs)
     else:
         # named style (e.g. "Thin") often isn't reflected in QFont.styleName()
         if not font.styleName():
@@ -624,7 +697,9 @@ def export_label(item, pkg, spread, ctx):
                 lp = _render_size_to_pt(lh, tf.lineHeightUnit())
                 if lp > 0:
                     for p in paragraphs:
-                        p["leading_pt"] = lp
+                        # a block's own fixed CSS line-height wins (HTML formatting)
+                        if not p.get("leading_pt"):
+                            p["leading_pt"] = lp
         except Exception:
             pass
         # buffer/halo -> outlined type (stroke straddles the outline, so

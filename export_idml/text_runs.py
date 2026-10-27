@@ -169,6 +169,9 @@ def _para_from_block(block, default_font, default_size_pt, default_color):
         # 1 == QTextBlockFormat.ProportionalHeight
         if enum_int(bf.lineHeightType()) == 1 and bf.lineHeight() > 0:
             para["line_height_pct"] = bf.lineHeight()
+        # 2 == QTextBlockFormat.FixedHeight (CSS line-height in pt/px)
+        elif enum_int(bf.lineHeightType()) == 2 and bf.lineHeight() > 0:
+            para["leading_pt"] = bf.lineHeight() * PX2PT
     except Exception:
         pass
     try:
